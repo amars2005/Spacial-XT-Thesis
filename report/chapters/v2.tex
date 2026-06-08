@@ -1,0 +1,36 @@
+\chapter{Version 2: CNN + MLP}\label{ch:v2}
+
+\section{Motivation}
+
+Given the limitations of the Random Forest approach, the natural next step is to move to a neural network that can represent player positions spatially rather than as a flat feature vector. Instead of encoding ``there are three defenders within ten metres'' as a scalar, we can encode the full pitch as an image with each player rendered as a Gaussian blob, and use a CNN (see Section~\ref{sec:meth_cnn}) to learn the spatial patterns directly.
+
+This also motivates a switch to the StatsBomb 360 dataset~\cite{statsbomb360}, which provides freeze-frame snapshots at the moment of every tracked event, giving us the actual positions of all visible players rather than just the ball.
+
+The evaluation framework also evolves for Version 2. Binary goal-chain labels are used as the training target, and ROC AUC serves as both the training signal and the primary evaluation metric (see Section~\ref{ch:eval}), monitoring whether the model correctly ranks goal-chain events above background events on the validation set.
+
+\section{Architecture}
+
+The Version 2 model is a dual-branch network (Figure~\ref{fig:v2arch}):
+
+A CNN branch, which takes the $(6 \times 40 \times 60)$ spatial pitch tensor and processes it through three convolutional blocks (Conv2d $\to$ BatchNorm $\to$ ReLU $\to$ MaxPool), halving spatial dimensions at each stage: $(6,40,60) \to (32,20,30) \to (64,10,15) \to (128,5,7)$. The flattened output is passed through a linear head to produce a 256-dimensional feature vector. We also have an MLP branch, which takes the 22-dimensional scalar feature vector through two fully-connected layers to produce a 32-dimensional feature vector.
+
+The outputs of both branches are concatenated to form a 288-dimensional combined representation, which is passed through a final two-layer classifier to produce a single logit (pre-sigmoid score). The model has 1,282,369 trainable parameters.
+
+
+\section{Training}
+
+Training uses \texttt{BCEWithLogitsLoss} (see Section~\ref{sec:meth_bce}) with a capped positive class weight to handle severe class imbalance (goal rate: 0.54\% in the freeze-frame subset; the higher rate relative to the full dataset's 1.74\% reflects that the 425-match freeze-frame subset skews toward higher-scoring competitions). The positive weight is capped at 10.0: without the cap, the unconstrained weight (class ratio $\approx 185$) caused loss spikes and gradient instability in preliminary training runs; capping at 10.0 stabilised training while still providing meaningful class rebalancing. The optimiser is Adam~\cite{kingma2015} with a learning rate of $10^{-3}$ and weight decay of $10^{-4}$, with a \texttt{ReduceLROnPlateau} scheduler monitoring validation ROC AUC. Training ran for 50 epochs on an NVIDIA RTX 6000 Ada GPU, with the best model checkpoint saved at each improvement in validation AUC. Full hyperparameter details for all versions are tabulated in Appendix~\ref{app:metrics} (Table~\ref{tab:hyperparams}).
+
+The dataset contains 1,400,053 events from 418 matches (292 training, 62 validation), split at the match level to prevent data leakage.
+
+\section{Results}
+
+Version 2 results are shown in Table~\ref{tab:results} (Chapter~\ref{ch:comparison}) alongside the other model versions. The ROC AUC represents a substantial improvement over Version 1, confirming that the CNN architecture combined with full player positional context is far better at separating goal-chain events from background possession. The ROC AUC reported at test time was positive and consistent, confirming the model learns a meaningful threat ordering despite the extreme class imbalance.
+
+The no-player panel of Figure~\ref{fig:v2_scenarios} (the baseline configuration) shows a strikingly smoother threat surface than Version 1. The CNN has learned a continuous, radially symmetric surface with threat peaking in the six-yard box and fading uniformly with distance. There are no decision-tree artefacts or isolated blobs.
+
+The scenario panels (Figure~\ref{fig:v2_scenarios}) reveal a key limitation: across all six configurations, the threat surfaces look almost identical. The CNN encodes player positions as continuous density fields, and that representation cannot distinguish between defensive formations that have equal density but different tactical shape. A compact low block and a high press produce nearly the same output: the CNN sees high defensive density in both cases.
+
+\section{Limitations and Motivation for Version 3}
+
+Version 2's core limitation is structural: player positions are encoded as image channels, and the CNN must infer their relationships implicitly from the resulting density patterns. It cannot directly represent that a specific defender is standing between ball and goal, or that two attackers are making runs behind the defensive line. Encoding player positions as individual tokens and attending over them explicitly is the natural fix.

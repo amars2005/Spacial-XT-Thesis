@@ -1,0 +1,64 @@
+\chapter{Machine Learning Methodology}\label{ch:methodology}
+
+This chapter explains the machine learning techniques employed across the three model versions. The aim is to give a self-contained account of how each method works and why it is appropriate for the problem, analogous to the evaluation methodology discussion in Chapter~\ref{ch:eval}.
+
+\section{Random Forests}\label{sec:meth_rf}
+
+A Random Forest is an ensemble learning method built on top of decision trees \cite{breiman2001}. A decision tree recursively partitions the feature space by choosing, at each node, the feature and threshold that best separates the training examples according to some impurity criterion (in this project, Gini impurity for classification). Trees can be grown until each leaf contains only a single training example, at which point the model fits the training data perfectly but generalises poorly.
+
+The split criterion used at each node is the Gini impurity. For a node covering a set of training examples with class proportions $p_0, p_1$ (negative and positive respectively), the Gini impurity is:
+\[
+    G = \sum_{k} p_k(1 - p_k) = 2\,p_0\,p_1
+\]
+The best split at each node is the one that maximises the reduction in Gini impurity across the two child nodes. A pure node (all one class) has $G = 0$; a maximally mixed node has $G = 0.5$.
+
+A Random Forest addresses the variance problem by training a large number of trees independently, each on a bootstrap sample of the training data (sampling with replacement) and using only a random subset of features at each split. The final prediction is obtained by majority vote (for classification) or averaging (for regression) across all trees. The randomness introduced at both the data level (bootstrapping) and the feature level (random subsets) reduces the variance of the ensemble relative to any individual tree, without a comparable increase in bias -- this is the bias--variance trade-off that makes Random Forests effective in practice~\cite{breiman2001}.
+
+For the xT task, the Random Forest is well suited to the Version 1 feature set: ten scalar features, most of which are continuous, with a small number of binary flags. The model is non-parametric in the sense that it makes no assumptions about the functional form of the relationship between features and labels, and it is robust to the feature correlations identified in Chapter~\ref{ch:features}. The key limitation is that it cannot naturally represent the spatial arrangement of 22 players , since a flat scalar vector loses all geometric structure, which motivates the move to a CNN in Version 2.
+
+\section{Convolutional Neural Networks}\label{sec:meth_cnn}
+
+A Convolutional Neural Network (CNN) is a type of deep neural network designed to process data with a known spatial or sequential structure \cite{lecun1998}. The core operation is discrete 2D convolution: for an input feature map $F$ and a learnable filter (kernel) $K$ of shape $k \times k$, the output feature map $O$ at position $(i,j)$ is:
+\[
+    O[i,j] = \sum_{m=0}^{k-1}\sum_{n=0}^{k-1} F[i+m,\, j+n]\cdot K[m,n]
+\]
+In practice, a layer applies $C_\text{out}$ independent filters, each producing one output channel; the filter weights are shared across all spatial positions. This weight sharing means the network does not need to learn the same detector independently for every location, giving rise to translation equivariance: shifting the input shifts the corresponding activation by the same amount.
+
+A typical convolutional block in this project has the following structure:
+\begin{enumerate}
+    \item Conv2d: applies $n_\text{out}$ learnable $3\times3$ filters to the input feature map, producing $n_\text{out}$ output channels.
+    \item Batch Normalisation~\cite{ioffe2015}: for each channel, the activations within a mini-batch are standardised and then rescaled by learned parameters $\gamma$ and $\beta$:
+    \[
+        \hat{x} = \frac{x - \mu_\mathcal{B}}{\sqrt{\sigma_\mathcal{B}^2 + \varepsilon}}, \qquad y = \gamma\hat{x} + \beta
+    \]
+    where $\mu_\mathcal{B}$ and $\sigma_\mathcal{B}^2$ are the mini-batch mean and variance, and $\varepsilon$ is a small constant for numerical stability. This reduces internal covariate shift (the change in the distribution of each layer's inputs as earlier layers are updated), making training significantly faster and more stable.
+    \item ReLU: the rectified linear unit activation $f(x) = \max(0, x)$, which introduces non-linearity without suffering from the vanishing gradient problems of sigmoid or tanh activations.
+    \item MaxPool2d: takes the maximum value in each $2\times2$ spatial window, halving the spatial dimensions and introducing a degree of translation invariance.
+\end{enumerate}
+
+Stacking three such blocks (with channel counts 6$\to$32$\to$64$\to$128) progressively reduces the spatial resolution from $40\times60$ to $5\times7$ whilst increasing the number of learned feature channels. The flattened output is then passed to a fully-connected head.
+
+\section{Multi-Layer Perceptrons}\label{sec:meth_mlp}
+
+A Multi-Layer Perceptron (MLP) is the simplest form of fully-connected neural network. Each layer computes an affine transformation followed by a non-linear activation:
+\[
+    \mathbf{h}^{(l)} = \sigma\!\left(\mathbf{W}^{(l)}\mathbf{h}^{(l-1)} + \mathbf{b}^{(l)}\right)
+\]
+where $\mathbf{W}^{(l)}$ and $\mathbf{b}^{(l)}$ are the learnable weight matrix and bias vector for layer $l$, and $\sigma$ is an activation function (ReLU throughout this project). MLPs are universal function approximators for continuous functions, but unlike CNNs they have no notion of spatial structure, so they are best suited to fixed-size vectors of scalar features rather than images.
+
+In Version 2, the MLP branch processes the 22-dimensional scalar feature vector (action type, spatial context, match context, pass-specific features) through two fully-connected layers, producing a 32-dimensional summary that is then concatenated with the CNN branch output before the final classifier.
+
+\section{Transformers and Self-Attention}\label{sec:meth_transformer}
+
+The Transformer architecture~\cite{vaswani2017} was introduced to process sequences without the sequential dependencies of recurrent networks. Its core mechanism is \textbf{scaled dot-product attention}:
+\[
+    \text{Attention}(Q, K, V) = \text{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right)V
+\]
+where $Q$ (queries), $K$ (keys), and $V$ (values) are linear projections of the input, and $d_k$ is the key dimension. The softmax produces a probability distribution over all positions in the input sequence, and the output is a weighted sum of the value vectors. Each element of the sequence can attend directly to every other element, with the weights learned from the data rather than fixed by position.
+
+Multi-head attention runs $h$ independent attention operations in parallel, each with different learned projections, and concatenates their outputs. This allows the model to simultaneously attend to different aspects of the input: for example, one head might focus on nearby defenders whilst another attends to the goalkeeper's position.
+
+A transformer encoder layer consists of multi-head self-attention followed by a position-wise feed-forward network, with residual connections and layer normalisation around both sub-layers. Stacking multiple such layers allows increasingly abstract relationships between tokens to be captured.
+
+Cross-attention is a variant where queries come from one sequence whilst keys and values come from a second sequence. In Version 3, the Stage 1 threat logit (a scalar) is projected into a query vector and the player tokens provide the keys and values. The output tells the model what aspects of the player arrangement are most relevant given the current baseline threat estimate.
+

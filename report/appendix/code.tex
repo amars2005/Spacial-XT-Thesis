@@ -1,0 +1,64 @@
+\chapter{Code Structure and Reproducibility}\label{app:code}
+
+The full source code for all three versions, the shared evaluation framework, and the interactive frontend is available in the project repository. This appendix documents the module layout, the data pipeline, and the commands needed to reproduce the reported results.
+
+\section{Repository Layout}
+
+\begin{itemize}
+    \item \textbf{Version 1} (\texttt{xT\_v1/}): a classical Random Forest pipeline over the full StatsBomb open dataset.
+    \begin{itemize}
+        \item \texttt{parser.py} -- reads raw StatsBomb event JSON and extracts on-ball events.
+        \item \texttt{builder.py} -- chains events into possessions and assigns the binary goal-chain label.
+        \item \texttt{loader.py} -- assembles the ten scalar features into a tabular training matrix.
+        \item \texttt{model.py} -- Random Forest training, prediction, and persistence.
+        \item \texttt{feature\_importance.py}, \texttt{feature\_correlation.py} -- diagnostic analyses of the tabular features.
+        \item Entry point: \texttt{main.py}.
+    \end{itemize}
+
+    \item \textbf{Version 2} (\texttt{xT\_v2/}): the dual-branch CNN\,+\,MLP on StatsBomb 360 freeze frames.
+    \begin{itemize}
+        \item \texttt{config.py} -- pitch/grid geometry, channel layout, scalar-feature columns, split ratios, and training hyper-parameters (re-exported by Version 3).
+        \item \texttt{encoder.py} -- renders each freeze frame into the $6\times40\times60$ multi-channel spatial tensor (players as Gaussian blobs) and the scalar feature vector.
+        \item \texttt{builder.py}, \texttt{dataset.py}, \texttt{loader.py} -- on-disk dataset construction and \texttt{DataLoader} assembly with match-level splitting.
+        \item \texttt{model.py} -- the dual-branch \texttt{XTModel} (CNN branch + MLP branch + classifier head).
+        \item \texttt{train.py} -- training loop (\texttt{BCEWithLogitsLoss}, capped \texttt{pos\_weight}, Adam, \texttt{ReduceLROnPlateau} on validation ROC AUC).
+        \item \texttt{visualize.py} -- per-action xT heatmaps and scenario grids for each of the four action types (Shot, Pass, Carry, Dribble), as described in Chapter~\ref{ch:viz}.
+        \item Entry point: \texttt{main.py --build / --train / --visualize / --all}.
+    \end{itemize}
+
+    \item \textbf{Version 3} (\texttt{xT\_v3/}): the two-stage frozen-CNN\,+\,Transformer pipeline.
+    \begin{itemize}
+        \item \texttt{config.py} -- player-token encoding (8-dim), Transformer hyper-parameters, and paths for the ablation checkpoints/metrics and the temperature-scaling artefact.
+        \item \texttt{builder.py} -- extracts per-player tokens \texttt{[x\_norm, y\_norm, dx, dy, dist, is\_teammate, is\_keeper, is\_actor]} from each freeze frame, with padding and a padding mask.
+        \item \texttt{dataset.py} -- match-level split shared with Version 2 via a persisted \texttt{test\_match\_ids.json}, so both versions are evaluated on identical events.
+        \item \texttt{model.py} -- \texttt{XTModelV3} (full cross-attention) plus the two ablation variants \texttt{XTModelV3MeanPool} (cross-attention replaced by masked mean-pooling) and \texttt{XTModelV3BallOnly} (Stage~2 receives only the Stage~1 logit and four ball features).
+        \item \texttt{train.py} -- Stage~2 training; each epoch logs $\Delta$AUC between the full Version 3 and the Stage~1 baseline on the same validation events.
+        \item \texttt{visualize.py} -- Version 3 heatmaps and scenario grids.
+        \item Entry point: \texttt{main.py --build / --train / --visualize / --all}.
+    \end{itemize}
+
+    \item \textbf{Frontend} (\texttt{visualisations/frontend/}): \texttt{app.py} and \texttt{templates/index.html} -- the Flask interactive web application (HTML5-canvas pitch, JSON inference endpoint), serving on port 5001. The user selects an action type explicitly; end positions are inferred from the player layout as described in Chapter~\ref{ch:viz}.
+
+    \item \textbf{Shared scripts} (\texttt{scripts/}):
+    \begin{itemize}
+        \item \texttt{evaluate.py} -- the single source of truth for the four metrics (ROC AUC, Brier, Log Loss), used identically by every version.
+        \item \texttt{evaluate\_ci.py} -- match-level bootstrap confidence intervals and the paired v2-vs-v3 significance test, from saved per-event prediction files.
+        \item \texttt{save\_v3\_split.py}, \texttt{update\_report\_numbers.py}, \texttt{generate\_eda\_plots.py} -- split persistence, metric-table regeneration, and exploratory-analysis figures.
+    \end{itemize}
+\end{itemize}
+
+\section{Data Pipeline}
+
+For each version the flow is the same in shape: raw StatsBomb JSON $\to$ parsed on-ball events $\to$ possession chaining and goal-chain labelling $\to$ feature/tensor encoding $\to$ a match-level 70/15/15 split (seed 42) $\to$ training with ROC AUC as the validation/checkpoint signal $\to$ evaluation through the shared \texttt{evaluate.py}. Versions 2 and 3 additionally require the 360 freeze frame for every retained event, so they operate on the 418-match freeze-frame subset and share an identical test population by construction.
+
+\section{Reproducing the Reported Numbers}
+
+\begin{enumerate}
+    \item \textbf{Version 1}: \texttt{cd xT\_v1 \&\& python main.py} (builds the tabular dataset, trains the Random Forest, and writes \texttt{metrics\_v1.json}).
+    \item \textbf{Version 2}: \texttt{cd xT\_v2 \&\& python main.py --all} (build, train, visualise; writes \texttt{metrics\_v2.json}).
+    \item \textbf{Version 3} and ablations: \texttt{cd xT\_v3 \&\& python main.py --all}, which trains the full cross-attention model and the \texttt{mean-pool} and \texttt{ball-only} variants, writing \texttt{metrics\_v3.json}, \texttt{metrics\_v3\_mlp.json}, and \texttt{metrics\_v3\_ball.json}. Temperature scaling fits a single scalar on the validation set and writes \texttt{checkpoints/temperature.json} and \texttt{metrics\_v3\_calibrated.json}.
+    \item \textbf{Confidence intervals}: run each evaluation with \texttt{--save-preds} to emit \texttt{predictions/preds.npz} for Versions 2 and 3, then \texttt{python scripts/evaluate\_ci.py} for the match-level bootstrap CIs and the paired AUC significance test.
+    \item \textbf{Frontend}: \texttt{cd visualisations/frontend \&\& python app.py}, then open \texttt{http://localhost:5001}.
+\end{enumerate}
+
+All training was performed on an NVIDIA RTX 6000 Ada GPU; the fixed seed 42 (and the seed-stability runs 0, 1, 123 reported in Chapter~\ref{ch:comparison}) make the results reproducible up to GPU non-determinism.

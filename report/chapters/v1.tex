@@ -1,0 +1,35 @@
+\chapter{Version 1: Random Forest}\label{ch:v1}
+
+\section{Data Preparation}
+
+The Version 1 data pipeline uses StatsBombPy~\cite{statsbombpy} to extract events from all available matches in the open dataset. Events are filtered to passes, carries, and shots, and their scalar features are extracted into a flat CSV file (\texttt{statsbomb\_chained\_dataset.csv}). Possession chains are identified and labelled as described in Section~\ref{sec:chains}, with goal-chain events receiving a label of 1 and all others receiving 0.
+
+The dataset is split at the match level using a 70/15/15 train/validation/test partition with a fixed seed (42). Version 1 does not use a validation loop during training (Random Forests have no early stopping by design~\cite{breiman2001}), so the validation matches are withheld from training but not actively used during it.
+
+Team form is computed using an exponentially decayed rolling window over the team's last five matches, giving more weight to recent results. Specifically, with decay factor $\lambda = 0.75$, the most recent match receives weight 1.0, the previous match 0.75, and the oldest match in the five-game window approximately 0.32 ($\lambda^4 = 0.75^4 \approx 0.316$). The full formulation is given in Chapter~\ref{ch:features}. This contrasts with a simple unweighted average and reflects the intuition that recent form is a stronger predictor of current performance than older results.
+
+\section{Model Architecture and Design Choices}
+
+Version 1 uses a \texttt{RandomForestClassifier} with 100 trees and a maximum depth of 12 (see Chapter~\ref{ch:methodology} for how Random Forests work). A Random Forest was chosen as the Version 1 baseline for three reasons: (i) it yields interpretable feature importances directly from the tree structure, which inform the feature selection choices in Versions 2 and 3 (Section~\ref{sec:v1_importance}); (ii) it is robust to differences in feature scale without requiring normalisation; and (iii) it is a well-established tabular baseline in football analytics~\cite{lucey2015}. A gradient-boosted ensemble such as XGBoost would likely produce a marginally higher AUC, but at the cost of interpretability and without the feature-importance output needed to motivate the Version 2 architecture.
+
+The maximum depth of 12 is a regularisation parameter: unconstrained trees would fit the training data perfectly but overfit badly on unseen events. Depths from 6 to unconstrained were evaluated on the validation set; depth 12 produced the highest validation AUC without signs of overfitting.
+
+Class imbalance is not explicitly addressed in Version 1. The Random Forest uses equal sample weights, which means the model can partially compensate by learning a conservative low-probability prior for most events.
+
+\section{Results}\label{sec:v1_results}
+
+Version 1 achieved a test ROC AUC of 0.6840, Brier Score of 0.0161, and Log Loss of 0.0802. The ROC AUC of 0.68 is a moderate improvement over random (0.5), confirming the model can distinguish goal-chain events from background possession. 
+
+The heatmap (Figure~\ref{fig:v1_heatmap}) confirms that the model has learned a broadly sensible spatial representation: threat is concentrated in and around the attacking penalty area, peaks just in front of the six-yard box, and drops off sharply as the ball moves deeper or wider. The defensive half is effectively zero throughout.
+
+The decision-tree structure of the model is also visible: rather than a smooth radial gradient, the threat surface has jagged, stepped edges and a handful of isolated blobs around the midfield area. These are artefacts of the axis-aligned decision boundaries that an ensemble of trees produces ; a CNN, which learns spatial filters directly from data, does not have this limitation.
+
+\section{Feature Importance}\label{sec:v1_importance}
+
+The feature importance results (Figure~\ref{fig:v1_importance}) reveal a clear hierarchy. \texttt{dist\_to\_goal} is overwhelmingly dominant at 0.393, accounting for nearly 40\% of total impurity reduction. \texttt{start\_x} is a distant second at 0.157, followed by \texttt{start\_y} and \texttt{angle\_to\_goal} which are essentially tied at 0.096 each.
+
+The three main context features contribute meaningfully: \texttt{minute} scores 0.080, \texttt{score\_diff} 0.068, and \texttt{team\_form} 0.056 , together accounting for roughly 20\% of total importance. This confirms that game-state context is a genuine signal, even if secondary to position. The action-type flags (\texttt{type\_Pass}, \texttt{type\_Carry}) contribute the least, as position already encodes most of the relevant information once action type is conditioned on.
+
+\section{Limitations and Motivation for Version 2}
+
+Distance to goal alone accounts for nearly 40\% of the model's predictive power, and the top four spatial features together account for around 74\%. The model is essentially learning a distance-to-goal heuristic with a contextual adjustment from match state. More fundamentally, it has no access to the positions of any of the other 21 players on the pitch. A flat scalar feature vector cannot encode the spatial arrangement of defenders and attackers, and a Random Forest cannot learn the complex geometric relationships between them from a list of numbers. Incorporating full player positional context requires a richer input representation.

@@ -1,0 +1,96 @@
+\chapter{Version 3: Transformer}\label{ch:v3}
+
+\section{Motivation}
+
+The key limitation of the CNN approach is that player positions are encoded as spatial density maps: each player becomes a Gaussian blob in the image, and the CNN must learn from the shape of the resulting density field. This makes it difficult for the model to distinguish between ``two defenders in the penalty area'' and ``one defender directly blocking the shot and one standing wide.'' A Transformer with attention (see Section~\ref{sec:meth_transformer}) can reason about each player as an individual token and model their pairwise relationships explicitly.
+
+Version 3 therefore introduces a two-stage architecture:
+The frozen Version 2 CNN, which provides a baseline position-based threat estimate, followed by a small transformer that reads the 360 freeze-frame player positions as a sequence of tokens, uses self-attention to model relationships between players, and then uses cross-attention in which the Stage 1 threat estimate (logit) acts as the query, asking: ``given this baseline threat level, what adjustment do the individual player positions warrant?'' It produces a residual adjustment to the Stage 1 logit.
+
+
+Only the second stage is trained; Stage 1 weights are frozen. Stage 2 therefore starts from a strong positional baseline (the Version 2 CNN) and learns only the residual correction based on player context. This transfer-learning approach \cite{devlin2019} keeps training tractable on the 418-match freeze-frame dataset.
+
+
+\section{Architecture}
+
+Each player in the freeze frame is encoded as an 8-dimensional vector:
+\[
+[\texttt{x\_norm},\ \texttt{y\_norm},\ \texttt{dx},\ \texttt{dy},\ \texttt{dist},\ \texttt{is\_teammate},\ \texttt{is\_keeper},\ \texttt{is\_actor}]
+\]
+where \texttt{dx}, \texttt{dy}, and \texttt{dist} are the player's position relative to the action start (ball position), normalised by pitch dimensions, giving the Transformer explicit relative-position information. Up to 22 players are included per event; if fewer are present, padding tokens are added with a padding mask so the Transformer ignores them.
+
+Our Stage 2 architecture is also deliberately conservative ($D_\text{model} = 64$, two encoder layers, four attention heads) to limit overfitting on the 292 training matches available. The resulting Stage 2 has 121,601 trainable parameters, which is small enough to regularise effectively on this dataset size while still capturing meaningful player interactions.
+
+We apply linear projection from 8-dim player tokens to a $D_\text{model} = 64$ embedding space as well as player self attention, where a 2-layer Transformer encoder ($N_\text{heads} = 4$, feed-forward dim = 256, dropout = 0.1) allows players to attend to each other.
+
+After this, we use cross-attention; the Stage 1 threat logit (a scalar) is projected to a 64-dim query vector and attends over the player context, producing a 64-dim context vector. Formally, let $D_\text{model} = 64$ and $n$ denote the number of non-padded player slots. The Stage 1 logit is projected by a learned matrix $W_Q \in \mathbb{R}^{1 \times D_\text{model}}$ to produce query $Q \in \mathbb{R}^{1 \times D_\text{model}}$. Player embeddings after self-attention (shape $n \times D_\text{model}$) serve as both keys $K \in \mathbb{R}^{n \times D_\text{model}}$ and values $V \in \mathbb{R}^{n \times D_\text{model}}$. The cross-attention output has shape $\mathbb{R}^{1 \times D_\text{model}}$, which is flattened to $\mathbb{R}^{64}$ for the fusion MLP. A Boolean padding mask zeroes out the attention logits for padded player slots before the softmax, ensuring that empty slots contribute nothing to the attended context.
+Finally, we use a fusion MLP, in which the 64-dim context vector is concatenated with the Stage 1 logit and passed through a 2-layer MLP ($[D_\text{model}{+}1] \to 64 \to 1$) to produce a scalar residual adjustment. The final output layer is initialised with near-zero weights ($\sigma = 0.01$) so that at the start of training $\text{logit}_{v3} \approx \text{logit}_{v2}$, meaning Stage 2 learns corrections on top of a strong positional baseline rather than re-learning the base signal from noise. This mirrors the residual-learning initialisation strategy introduced by He et al.~\cite{he2016deep} and formalised in the FixUp scheme of Zhang et al.~\cite{zhang2019fixup}.
+
+The final output is $\text{logit}_{v3} = \text{logit}_{v2} + \text{adjustment}$. The complete Stage 2 architecture is illustrated in Figure~\ref{fig:v3arch}.
+
+\section{Training}
+
+Training mirrors Version 2: \texttt{BCEWithLogitsLoss} with capped positive class weight, Adam optimiser (learning rate $5 \times 10^{-4}$, weight decay $10^{-4}$), \texttt{ReduceLROnPlateau} on validation ROC AUC, and 40 training epochs. Only events with a 360 freeze frame are included, as player tokens are required for Stage 2. Each epoch logs both the full Version 3 AUC and the Stage 1 baseline AUC on the same events, giving a direct measure of how much Stage 2 adds ($\Delta$AUC).
+
+\section{Results}
+
+Version 3 results are shown in Table~\ref{tab:results} (Chapter~\ref{ch:comparison}), evaluated on the same 64 freeze-frame test matches as Version 2 (199,788 events). The six Shot scenario panels are shown in Figure~\ref{fig:v3_scenarios} and discussed in detail below; per-action grids for Pass, Carry, and Dribble are in Appendix~\ref{app:figures}.
+
+The six Version 3 scenario panels (Figure~\ref{fig:v3_scenarios}) show considerably more differentiation than the equivalent Version 2 panels, with each configuration producing a qualitatively distinct pattern corresponding to the specific tactical setup.
+
+In a compact low block, eight defenders forming two compact lines suppress the central channel. Threat is not globally reduced; instead it is redirected toward wider angles, reflecting that the Transformer has learned to associate a dense central defensive wall with diminished central threat, a selective suppression absent from Version 2.
+
+This is different to a high press, in which defenders are positioned far up the pitch. Version 3 preserves threat near goal (correctly, as no defenders are close) and also elevates values in the space behind the high line, a formation-level inference that Version 2 cannot make.
+
+In a 2v1 overload in the box, two attacking teammates create a numerical advantage over a lone defender. Version 3 shows a pronounced amplified hot spot concentrated near where the overloading runners are positioned, rather than a diffuse general amplification.
+
+We also have a counter-attacking scenario, where three attackers spread across wide and central positions produce a bimodal threat distribution: elevated values in both wide channels, with a corridor of reduced threat between the two defending players separating the flanks.
+
+Finally, the scenario in which the goalkeeper is off their line is the most visually distinctive panel: threat is markedly elevated directly at the goal mouth behind the keeper's advanced position. This is the highest global peak across all scenarios in either version: the Transformer correctly identifies an uncovered goal area.
+
+\section{Cross-Version Scenario Comparison}
+
+Comparing the two scenario grids side by side illustrates what each architecture can and cannot represent.
+
+In Version 2, both the Compact Low Block and High Press panels are essentially identical to the baseline. In Version 3 they produce opposite effects. This is a qualitative difference: Version 2 counts defenders; Version 3 reasons about their shape and location relative to the ball.
+
+The Goalkeeper Off Line scenario is the clearest example of individual-player reasoning. Version 2 produces a very subtle change relative to its baseline. Version 3 correctly identifies the uncovered goal area and produces the highest threat values of any scenario.
+
+The distinction is not simply that Version 3 is a better model; the two architectures are given identical information but process it fundamentally differently. Version 2 projects each player into a blurred density channel. Version 3 encodes each player as a token and uses cross-attention in which the Stage 1 threat logit queries the player context explicitly, making formation shape, numerical balance, and individual player roles all directly accessible.
+
+Two caveats add nuance to the scenario comparisons without undermining the overall picture. The quantitative results (Section~\ref{sec:v3_ablation} and Chapter~\ref{ch:comparison}) show that Version 3 achieves a statistically significant improvement in ROC AUC ($+0.0066$, $p = 0.017$) and  over Version 2; the scenarios illustrate the qualitative mechanisms behind that gain. First, the scenario surfaces show Shot xT (see Chapter~\ref{ch:viz}), evaluated under a neutral game-state baseline (period 1, minute 0, score tied). This means the formation-sensitivity visible in the panels reflects the Transformer's response to player positions directly, without confounding from heuristic action-type weighting. Second, these are qualitative illustrations on hand-constructed inputs, not held-out measurements. The ablation in Section~\ref{sec:v3_ablation} further decomposes the ranking gain, showing that a fraction comes from the learned correction layer even without player tokens, and that the multi-query variant can extract more of the available player-context signal. We present the scenarios as evidence of what the architecture \emph{can represent} and as intuition for the formation-awareness underlying the measured ranking improvement.
+
+\section{Ablation Study}\label{sec:v3_ablation}
+
+To determine which components of Stage 2 are responsible for the improvement over Version 2, two ablation variants were trained on the same freeze-frame training dataset with the same frozen Stage 1 backbone, the same seed, epochs, and optimiser settings.
+
+\begin{itemize}
+    \item \textbf{V3 Mean-Pool MLP}: The cross-attention block is replaced by a masked mean-pool over the player token embeddings, whose output is concatenated with the Stage 1 logit and passed through the same 2-layer fusion MLP. This tests whether the attentional weighting over players is necessary, or whether any player-context aggregation achieves the same result.
+    \item \textbf{V3 Ball-Only}: Stage 2 receives only the Stage 1 logit and the 4 ball features (start position, distance, angle to goal) — no player tokens, no self-attention, no cross-attention. The residual adjustment is produced by a 2-layer MLP applied to this 5-dimensional input. This tests whether any improvement in V3 over V2 comes from player positional information at all, or merely from adding an extra learned correction layer.
+\end{itemize}
+
+The table showing the ablation results can be found in Appendix B. \ref{app:metrics}
+
+The component ablation reveals that the V2$\to$V3 AUC gain ($+0.0066$) decomposes very unequally. The Ball-Only variant (using only the Stage 1 logit and four ball-context features with no player tokens) already achieves AUC 0.8353 ($+0.0056$ over V2), accounting for \textbf{85\%} of the total gain. Adding a mean-pooled summary of player tokens recovers a further $+0.0003$, and replacing mean-pool with full cross-attention adds the remaining $+0.0007$. The dominant driver is therefore the extra learned correction layer, not the player positional information.
+
+The Ball-Only model also achieves the best Brier Score (0.0090) and Log Loss (0.0517): player tokens add marginal ranking benefit but hurt calibration. These findings motivate investigating whether an improved attention design can unlock more of the player-context signal.
+
+\subsection{Architectural Experiments}\label{sec:v3_arch_experiments}
+
+Three further variants test specific hypotheses about why the original cross-attention contributes so little, trained under identical conditions (same split, seed 42, 40 epochs).
+
+\begin{itemize}
+    \item \textbf{V3 Multi-Query} ($K = 8$ learned queries): Instead of a single scalar-logit query, $K$ independent queries are formed by adding learned offsets to a shared base vector derived from the Stage 1 logit and the 4 ball features. Each query attends over the player context; the $K$ attended vectors are concatenated and passed to the fusion MLP. This tests whether the single-query design in the original V3 is an information bottleneck.
+    \item \textbf{V3 Rich Features} (13-dim tokens): The 8 per-player features are augmented on the fly with 5 additional geometric quantities (distance to goal, direction cosine and sine to goal, along-lane and cross-lane displacement relative to the ball-to-goal vector). This tests whether feature poverty limits the original encoding.
+    \item \textbf{V3 Partial Unfreeze}: The original cross-attention Stage 2 is trained alongside a partially thawed Stage 1 (last convolutional block and classifier, fine-tuned at $5 \times 10^{-5}$). This tests whether holding the CNN backbone completely fixed is the limiting factor.
+\end{itemize}
+
+The table showing the architectural experiment results can be found in Appendix B. \ref{app:metrics}
+
+\textbf{Multi-Query.} Replacing the single logit-query with eight learned queries achieves the highest AUC (0.8377, $+0.0014$ over full V3). This confirms that the single scalar query in the original V3 is an information bottleneck: multiple queries can attend to different aspects of the player arrangement simultaneously (one may focus on the nearest defender, another on goalkeeper position), extracting more of the available player signal. The player-token contribution over ball-only now widens to $+0.0024$ in AUC (vs $+0.0010$ for single-query), accounting for 30\% of the V2$\to$Multi-Query gain rather than 15\%. Calibration, however, degrades further (Brier 0.0103, Log Loss 0.0573); temperature scaling would recover it as for the original V3.
+
+\textbf{Rich Features.} The richer 13-dimensional token encoding performs \emph{worse} than the original V3 on all three metrics (AUC 0.8343). The additional geometric features (goal direction, lane alignment) appear to add noise rather than signal, possibly because the CNN's spatial encoding already computes analogous quantities implicitly, or because the extra dimensions make the embedding harder to learn from the available 425-match dataset. This result rules out feature poverty as the primary bottleneck.
+
+\textbf{Partial Unfreeze.} Fine-tuning the CNN's last block and classifier alongside Stage 2 produces AUC 0.8348, essentially the same as the frozen backbone (0.8363), with marginally better Log Loss (0.0523 vs 0.0546) but unchanged Brier. The backbone learned by Version 2 is already well-calibrated to the threat-ranking task; additional gradient signal from Stage 2 does not meaningfully improve it.
+
+\textbf{Overall synthesis.} The architectural experiments sharpen the conclusion from the component ablation. The single-query bottleneck is real and partially fixable with multi-query attention, but the correction-layer dominance persists: ball-only Stage 2 (no player context at all) accounts for 70\% of the V2$\to$Multi-Query AUC gain. Richer per-player geometry and partial unfreezing are null results. The most practically useful variant for ranking remains Multi-Query V3 (AUC 0.8377), and the most useful for calibrated probabilities remains the temperature-scaled original V3.

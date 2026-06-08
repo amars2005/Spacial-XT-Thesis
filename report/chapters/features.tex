@@ -1,0 +1,123 @@
+\chapter{Features}\label{ch:features}
+
+In order to build a successful machine learning model, we need to decide which aspects of a football event can plausibly influence the goal probability of a possession chain. Football is a complex sport where numerous small factors (a divot in the pitch, a momentary lapse in concentration) can influence outcomes. Many of these either cannot be measured or are absent from the StatsBomb dataset, so the feature set is necessarily a subset of the variables that truly matter.
+
+\section{Position-Based Features}
+
+A large proportion of the useful signal in the dataset comes directly from the position of the ball, the attacking players, and the opposing players. Goal probability increases sharply as the ball moves closer to goal, which means spatial features form the backbone of all three model versions.
+
+\subsection{$x$--$y$ Co-ordinates}
+
+The dataset records the start and end position of the ball during every on-ball event. Modelling the pitch as a 120$\times$80 metre grid (StatsBomb coordinate space), we extract the \texttt{start\_x}, \texttt{start\_y}, \texttt{end\_x}, and \texttt{end\_y} co-ordinates directly. The start position tells us where the ball is when the event begins; the end position captures where it moves to, which is particularly informative for passes and carries. This can be seen through our EDA, the ball in the attacking third meant the chain was significantly more likely to result in a goal.
+
+\subsection{Distance to Goal}
+
+Even though the raw co-ordinates already encode spatial position, the Euclidean distance from the ball's start position to the centre of the attacking goal (at $(120, 40)$ in StatsBomb space) is included as an explicit feature. This gives the model a direct scalar encoding of proximity to goal without needing to learn the transformation from raw co-ordinates.
+
+\subsection{Angle to Goal}
+
+The arc of the goal face visible from the ball's position changes with both distance and lateral position: a central position offers a wider view of the goal than an equivalent distance out wide. The angle to goal (the arctangent of the perpendicular distance from the goal-line centre divided by the distance to goal) is included as a feature to capture this. It complements distance in a way that neither co-ordinate alone provides. The goal-chain rate heatmap (Figure~\ref{fig:goal_rate_zone}) provides supporting evidence: at a fixed distance from goal, central zones consistently show higher rates than wide zones, directly reflecting the angle advantage.
+
+\subsection{Opponents' Positions}
+
+The position of opposing players, and in particular the goalkeeper, significantly affects the probability that a possession sequence leads to a goal. However, full positional data is only available for the 425 matches with StatsBomb 360 freeze frames~\cite{statsbomb360}. Version 1 therefore ignores player positions entirely, while Versions 2 and 3 encode them as spatial image channels and token sequences respectively (see Chapters~\ref{ch:v2} and \ref{ch:v3}). 
+
+\subsection{Ball Height}
+
+A continuous $z$-coordinate for ball height is not provided by StatsBomb. However, for pass events, a categorical \texttt{pass\_height} field classifies the pass as Ground, Low, or High. From Version 2 onwards this is encoded as a normalised scalar (\texttt{pass\_height\_norm}: 0.0, 0.5, 1.0 respectively) and zero-filled for non-pass events, providing a partial proxy for ball height on passes. Ground passes are more controllable and more likely to maintain forward momentum into dangerous areas; including ball height follows the StatsBomb pass taxonomy directly and is motivated by the domain knowledge that lofted passes carry different tactical intent than driven ground passes.
+
+\section{Context-Based Features}
+
+Not all relevant information is spatial. Several contextual features capture the game-state circumstances under which an event occurs, which can materially affect how threatening a given possession sequence is.
+
+\subsection{Team Form}
+
+Team form is a standard predictor in sports analytics models~\cite{reep1968}: recent results carry information about current team strength and playing style beyond what the instantaneous match state alone captures. It is represented here as a \textbf{recency-weighted fraction of points} earned by the possessing team in their last five matches before the current game, normalised to a 0--1 scale. Each match in the window receives an exponentially decaying weight:
+
+\[
+w_j = \lambda^{(n-1-j)}, \quad j = 0, \ldots, n-1, \quad \lambda = 0.75
+\]
+
+where $j=0$ is the oldest match in the window and $j=n-1$ is the most recent. The team form score is then:
+
+\[
+\text{form} = \frac{\displaystyle\sum_{j=0}^{n-1} w_j \cdot p_j}{3 \cdot \displaystyle\sum_{j=0}^{n-1} w_j}
+\]
+
+where $p_j \in \{0, 1, 3\}$ is the points earned in match $j$ (loss, draw, win). The denominator $3\sum w_j$ normalises the value to $[0,1]$, where 1.0 represents winning every game. A neutral prior of 0.5 is used for teams with fewer than one prior appearance in the dataset. With $\lambda = 0.75$, the most recent match carries weight 1.0, the previous match 0.75, and the oldest match in the five-game window approximately 0.32 ($\lambda^4 = 0.75^4 \approx 0.316$), capturing the intuition that recent form is a stronger signal than performance from several weeks earlier.
+
+\subsection{Current Game Score}
+
+The score at the time of each event is included as a \texttt{score\_diff} feature representing the possessing team's goal advantage. A team trailing late in a game is likely to take more risks (shooting from distance, playing higher up the pitch, committing more players forward), which will affect the distribution of possession events and their associated threat values. Score differential is a well-established game-state control variable in football analytics~\cite{decroos2019}: VAEP, for example, explicitly includes the current score as part of its action-state feature set, reflecting the same intuition that a team's attacking intent is conditioned on the scoreline. This feature is included in all three versions.
+
+\subsection{Time of Play}
+
+Both \texttt{period} (match half) and \texttt{minute} (elapsed time) are included. Similarly to score, teams behave differently as the game progresses, particularly when protecting a lead late on or chasing an equaliser. They are correlated with score differential but capture distinct information: time encodes progressive fatigue, the approaching end of a period, and the tactical changes teams make within a half, independently of the current scoreline. In Versions 2 and 3 both features are normalised; in Version 1 they are used as raw values.
+
+\section{Final Feature List}
+
+\subsection{Version 1 Features}\label{sec:v1_features}
+
+The final feature list for the Version 1 Random Forest model is:
+
+\begin{itemize}
+    \item \texttt{start\_x}, \texttt{start\_y}: ball start position (raw StatsBomb co-ordinates)
+    \item \texttt{dist\_to\_goal}: Euclidean distance from ball start to goal centre
+    \item \texttt{angle\_to\_goal}: arctangent angle from ball start to goal centre
+    \item \texttt{type\_Pass}, \texttt{type\_Carry}: one-hot encoded action type
+    \item \texttt{period}: match half (1 or 2; extra-time periods 3--5 also present)
+    \item \texttt{minute}: elapsed minutes since kick-off
+    \item \texttt{score\_diff}: possessing team's goals minus opponent's goals at the time of the event
+    \item \texttt{team\_form}: fraction of points earned in the last five matches (0--1 scale)
+\end{itemize}
+
+\section{Feature Correlation}
+
+Before training, it is useful to inspect how much the Version 1 features correlate with each other. Highly correlated features provide overlapping information, which does not necessarily hurt a Random Forest (which is robust to moderate inter-feature correlation) but is worth understanding.
+
+
+The matrix (Figure~\ref{fig:feat_corr}) reveals three distinct clusters. First, the spatial features: \texttt{dist\_to\_goal} and \texttt{start\_x} show a strong negative correlation ($r = -0.98$), since being further up the pitch means being closer to goal. Likewise, \texttt{angle\_to\_goal} and \texttt{start\_y} are strongly correlated ($r = -0.90$), as centrality on the pitch determines the angle. Both pairs carry overlapping information, but each captures a meaningfully different geometric aspect of position, and both were retained.
+
+Second, the action-type flags: \texttt{type\_Pass} and \texttt{type\_Carry} show a near-perfect negative correlation ($r = -0.97$), a direct consequence of one-hot encoding. Despite this redundancy, both flags were retained to preserve an explicit positive signal for each action type.
+
+Third, the time features: \texttt{period} and \texttt{minute} are strongly correlated ($r = 0.86$), as the minute increases monotonically within each period. The remaining context features (\texttt{score\_diff}, \texttt{team\_form}) are nearly orthogonal to all spatial and time features, with only a mild positive correlation between them ($r = 0.25$), reflecting that better-performing teams tend to be leading more often.
+
+
+\subsection{Version 2 and 3 Features}
+
+For Versions 2 and 3, the feature representation is significantly expanded:
+
+\textbf{Spatial channels (6 channels, each a $40\times60$ grid):}
+\begin{enumerate}
+    \item Ball start position (Gaussian blob)
+    \item Teammate positions (summed Gaussians, clipped to $[0,1]$)
+    \item Opponent positions (summed Gaussians, clipped to $[0,1]$)
+    \item Goalkeeper position (Gaussian blob)
+    \item Action end position (Gaussian blob)
+    \item Visible area mask (binary polygon rasterisation from 360 data)
+\end{enumerate}
+
+Each player or ball position is encoded as a 2D Gaussian blob on the grid. For a player at pitch coordinates $(x_p, y_p)$, the contribution to grid cell $(i,j)$ (with $i \in \{0,\ldots,39\}$, $j \in \{0,\ldots,59\}$) is:
+\[
+    g_{ij} = \exp\!\left(-\frac{(j_\text{px} - j)^2 + (i_\text{px} - i)^2}{2\sigma^2}\right)
+\]
+where $(j_\text{px}, i_\text{px})$ are the player's grid coordinates (obtained by scaling $(x_p, y_p)$ by the grid resolution), and $\sigma = 1.5$ grid units. This value was chosen so that each player's influence extends over a $3{\times}3$ grid neighbourhood, providing spatial smoothness while preserving location discrimination at the $40{\times}60$ grid resolution; smaller $\sigma$ would produce near-binary channels, while larger $\sigma$ would blur distinct player positions together. For channels with multiple players (teammates, opponents), blobs are summed and the channel is clipped to $[0,1]$, so the network sees a smooth player-density field. For single-player channels (ball, goalkeeper, end position), no clipping is needed. This soft encoding is differentiable with respect to the implied player position and allows the CNN to learn spatially graded responses to proximity rather than treating each player as a binary switch.
+
+\textbf{Scalar features (22 values):}
+\begin{itemize}
+    \item 7 action type one-hots: Pass, Carry, Shot, Dribble, Ball Receipt, Pressure, Interception
+    \item Normalised start position: \texttt{start\_x\_norm}, \texttt{start\_y\_norm}
+    \item \texttt{dist\_to\_goal\_norm}, \texttt{angle\_to\_goal\_norm}
+    \item Match context: \texttt{under\_pressure}, \texttt{period\_norm}, \texttt{minute\_norm}, \texttt{score\_diff\_norm}
+    \item Pass-specific: \texttt{pass\_length\_norm}, \texttt{pass\_angle\_norm}, \texttt{pass\_height\_norm}, \texttt{is\_pass\_switch}, \texttt{is\_through\_ball}
+    \item Normalised end position: \texttt{end\_x\_norm}, \texttt{end\_y\_norm}
+\end{itemize}
+
+The \texttt{under\_pressure} flag captures whether the ball carrier is being pressed at the moment of the action. Figure~\ref{fig:goal_rate_type} confirms that pressure events have a near-zero goal-chain rate, which supports using this flag to distinguish high-threat actions from defensive disruptions. The pass-specific features are motivated by domain knowledge: switch passes and through-balls correspond to line-breaking actions specifically associated with elevated goal probability, whilst pass length and angle capture whether a pass is progressive (forward, into space) or conservative (square, backward). The end position features (\texttt{end\_x\_norm}, \texttt{end\_y\_norm}) reflect where the ball moves to, which is directly informative for carries and passes that advance into dangerous zones (see Figure~\ref{fig:goal_chain_locs}).
+
+Additionally, Version 3 encodes each player in the 360 freeze frame as a token vector of 8 values:
+\[
+[\texttt{x\_norm},\ \texttt{y\_norm},\ \texttt{dx},\ \texttt{dy},\ \texttt{dist},\ \texttt{is\_teammate},\ \texttt{is\_keeper},\ \texttt{is\_actor}]
+\]
+where \texttt{dx}, \texttt{dy}, and \texttt{dist} are the player's position relative to the action start (ball position), normalised by pitch dimensions. This gives the Transformer explicit relative-position information, which is more informative than absolute coordinates alone for reasoning about spatial relationships such as pressing distance or defensive coverage. Up to 22 players are encoded per event, padded to a fixed size with a boolean mask to exclude padding tokens from attention.
+

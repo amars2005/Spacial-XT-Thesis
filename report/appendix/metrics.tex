@@ -1,0 +1,131 @@
+\chapter{Full Metric Tables}\label{app:metrics}
+
+\begin{table}[h]
+\centering
+\caption{Test set evaluation metrics for all models. This mirrors Table~\ref{tab:results} in Chapter~\ref{ch:comparison}. Bold indicates the best value per metric. V1 (full) uses all events from 520 matches; V1 (360 subset), V2, V3, and VAEP use the same 64 freeze-frame test matches. 95\% bootstrap CIs (2{,}000 match-level iterations, seed 42) appear in smaller type beneath each point estimate for V1 (360 subset), V2, and V3. V3 (calibrated) applies post-hoc temperature scaling ($T = 0.597$). Brier Score and Log Loss are omitted for VAEP due to the different evaluation population (see Chapter~\ref{ch:comparison}).}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Model} & \textbf{ROC AUC} $\uparrow$ & \textbf{Brier} $\downarrow$ & \textbf{Log Loss} $\downarrow$ \\
+\midrule
+v1: RF (full dataset)    & 0.6840 & 0.0161 & 0.0802 \\
+v1: RF (360 subset)      & \shortstack[c]{0.6715 \\ {\scriptsize [0.6357, 0.7046]}} & \shortstack[c]{0.0199 \\ {\scriptsize [0.0158, 0.0243]}} & \shortstack[c]{0.0962 \\ {\scriptsize [0.0795, 0.1140]}} \\
+\midrule
+VAEP: XGBoost$^{\dagger}$ & 0.7359 & --- & --- \\
+\midrule
+v2: CNN + MLP            & \shortstack[c]{0.8297 \\ {\scriptsize [0.7955, 0.8704]}} & \textbf{0.0069} & 0.0398 \\
+v3: Transformer          & \shortstack[c]{\textbf{0.8363} \\ {\scriptsize [0.8015, 0.8763]}} & 0.0091 & 0.0546 \\
+v3: Transformer (calibrated) & \textbf{0.8363} & 0.0072 & \textbf{0.0348} \\
+\bottomrule
+\end{tabular}
+\begin{minipage}{\linewidth}
+\vspace{4pt}
+\footnotesize $^{\dagger}$VAEP evaluated on all ball-progressing SPADL actions from the 64 test matches (125,383 events; chain-goal rate 1.23\%), whereas Versions 2 and 3 use the freeze-frame-filtered subset (199,788 events; chain-goal rate 0.32\%). ROC AUC is threshold-invariant and unaffected by this difference; Brier Score and Log Loss are not directly comparable and are omitted for VAEP.
+\end{minipage}
+\label{tab:metrics_full}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Dataset statistics and train/val/test split by model version.}
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Version} & \textbf{Matches} & \textbf{Total Events} & \textbf{Train Events} & \textbf{Val Events} & \textbf{Test Events} \\
+\midrule
+v1 (all events)      & 3,464 & 6,108,353 & 4,284,580 & 913,800  & 909,973 \\
+v2/v3 (freeze-frame) & 418   & 1,400,053 & 981,949   & 218,316  & 199,788 \\
+\bottomrule
+\end{tabular}
+\label{tab:dataset_stats}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Key hyperparameters for each model version.}
+\begin{tabular}{llll}
+\toprule
+\textbf{Hyperparameter} & \textbf{v1 (RF)} & \textbf{v2 (CNN)} & \textbf{v3 (Transformer)} \\
+\midrule
+Architecture        & Random Forest       & Dual-branch CNN+MLP  & Frozen v2 + Transformer \\
+Estimators / Epochs & 100 trees           & 50 epochs            & 40 epochs \\
+Max depth / LR      & 12                  & $10^{-3}$            & $5{\times}10^{-4}$ \\
+Weight decay        & N/A                 & $10^{-4}$            & $10^{-4}$ \\
+Input features      & 10 scalar           & 6-ch image + 22 scalar & 6-ch image + 22 scalar + player tokens \\
+Trainable params    & N/A                 & 1,282,369            & 121,601 \\
+Train split seed    & 42                  & 42                   & 42 \\
+Label type          & Binary              & Binary               & Binary \\
+\bottomrule
+\end{tabular}
+\label{tab:hyperparams}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Complete test-set results for all V3-family and reference models (64-match freeze-frame test set, 199,788 events). 95\% bootstrap CIs (2{,}000 match-level iterations, seed 42) appear in smaller type beneath each point estimate for V2 and V3 Full, from \texttt{scripts/evaluate\_ci.py}. Bold = best per metric across the six V3-family rows.}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Model} & \textbf{ROC AUC} $\uparrow$ & \textbf{Brier} $\downarrow$ & \textbf{Log Loss} $\downarrow$ \\
+\midrule
+V3 Full (cross-attn)   & \shortstack[c]{0.8363 \\ {\scriptsize [0.8015, 0.8763]}} & \shortstack[c]{0.0091 \\ {\scriptsize [0.0078, 0.0104]}} & \shortstack[c]{0.0546 \\ {\scriptsize [0.0502, 0.0596]}} \\
+V3 Mean-Pool MLP       & 0.8356 & 0.0093 & 0.0539 \\
+V3 Ball-Only Stage~2   & 0.8353 & \textbf{0.0090} & \textbf{0.0517} \\
+\midrule
+V3 Multi-Query ($K{=}8$) & \textbf{0.8377} & 0.0103 & 0.0573 \\
+V3 Rich Features (13-dim) & 0.8343 & 0.0099 & 0.0562 \\
+V3 Partial Unfreeze    & 0.8348 & 0.0091 & 0.0523 \\
+\midrule
+V2 CNN + MLP (reference)  & \shortstack[c]{0.8297 \\ {\scriptsize [0.7955, 0.8704]}} & \shortstack[c]{\textbf{0.0069} \\ {\scriptsize [0.0056, 0.0083]}} & \shortstack[c]{0.0398 \\ {\scriptsize [0.0347, 0.0454]}} \\
+\bottomrule
+\end{tabular}
+\begin{minipage}{\linewidth}
+\vspace{4pt}
+\footnotesize
+All variants share the same frozen Stage~1 (V2) backbone, seed 42, 40 training epochs, and 64 test matches.
+Adjusted p-values from the Holm--Bonferroni multiple-comparisons test are in Table~\ref{tab:multiplicity}.
+\end{minipage}
+\label{tab:all_variants}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Paired bootstrap AUC significance tests (H$_0$: variant AUC $\leq$ V3 Full baseline) with Holm--Bonferroni correction ($m=5$, $\alpha=0.05$, 2{,}000 bootstrap iterations); see equation~\eqref{eq:holm}. Results from \texttt{scripts/evaluate\_multiplicity.py --save-json metrics/multiplicity.json}.}
+\begin{tabular}{lcccccl}
+\toprule
+\textbf{Variant} & \textbf{AUC} & \textbf{$\Delta$AUC} & \textbf{95\% CI (diff)} & \textbf{$p$ (raw)} & \textbf{$p$ (Holm)} & \textbf{Sig?} \\
+\midrule
+V3 Multi-Query ($K{=}8$) & 0.8377 & $+0.0014$ & $[-0.0043,\ +0.0078]$ & 0.307 & 1.000 & No \\
+V3 Mean-Pool MLP         & 0.8356 & $-0.0007$ & $[-0.0016,\ +0.0001]$ & 0.925 & 1.000 & No \\
+V3 Rich Features         & 0.8343 & $-0.0020$ & $[-0.0061,\ +0.0018]$ & 0.823 & 1.000 & No \\
+V3 Partial Unfreeze      & 0.8348 & $-0.0015$ & $[-0.0028,\ +0.0000]$ & 0.979 & 1.000 & No \\
+V3 Ball-Only Stage~2     & 0.8353 & $-0.0010$ & $[-0.0019,\ +0.0000]$ & 0.975 & 1.000 & No \\
+\midrule
+\multicolumn{7}{l}{\small Baseline (V3 Full): AUC = 0.8363} \\
+\bottomrule
+\end{tabular}
+\begin{minipage}{\linewidth}
+\vspace{4pt}
+\footnotesize
+Rows sorted by $\Delta$AUC descending. One-sided tests: H$_0$ is variant AUC $\leq$ baseline AUC. None of the five variants reaches statistical significance after Holm--Bonferroni correction. See Section~\ref{sec:holm} for the formula.
+\end{minipage}
+\label{tab:multiplicity}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Carry distance summary statistics computed from 217,606 carry events across the 292 training matches (StatsBomb open dataset). Distances are Euclidean between \texttt{location} and \texttt{carry\_end\_location}. The median value (4.06 units) is used as the carry end-position heuristic in the heatmap visualisations and interactive frontend (Chapter~\ref{ch:viz}).}
+\begin{tabular}{lr}
+\toprule
+\textbf{Statistic} & \textbf{Value (StatsBomb units$^{\dagger}$)} \\
+\midrule
+Number of carry events & 217{,}606 \\
+Median distance        & 4.06 \\
+Mean distance          & 6.30 \\
+25th percentile        & 1.75 \\
+75th percentile        & 8.24 \\
+\bottomrule
+\end{tabular}
+\begin{minipage}{\linewidth}
+\vspace{4pt}
+\footnotesize $^{\dagger}$StatsBomb coordinate units: 1 unit $\approx$ 1\,m on a standard 120$\times$80 pitch. Training-split matches only; validation and test matches excluded to avoid data leakage.
+\end{minipage}
+\label{tab:carry_stats}
+\end{table}

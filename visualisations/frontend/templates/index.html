@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>xT v3 — Interactive Predictor</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #1a1a2e;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+  }
+
+  h1 { font-size: 1.4rem; font-weight: 600; letter-spacing: 0.05em; color: #a0c4ff; margin-bottom: 4px; }
+  .subtitle { font-size: 0.78rem; color: #6c8ebf; margin-bottom: 16px; }
+
+  .layout {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+    width: 100%;
+    max-width: 1200px;
+  }
+
+  #pitch-wrap { position: relative; flex-shrink: 0; }
+  #pitch { display: block; cursor: crosshair; border-radius: 4px; }
+
+  .panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 260px;
+  }
+
+  .card {
+    background: #16213e;
+    border: 1px solid #0f3460;
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+
+  .card h2 {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #6c8ebf;
+    margin-bottom: 10px;
+  }
+
+  .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+
+  .mode-btn {
+    padding: 8px 6px;
+    border: 2px solid transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 600;
+    transition: all 0.15s;
+    background: #0f3460;
+    color: #ccc;
+    text-align: center;
+  }
+  .mode-btn:hover { filter: brightness(1.2); }
+  .mode-btn.active { border-color: currentColor; filter: brightness(1.3); }
+  .mode-btn[data-mode="ball_start"] { color: #fff176; }
+  .mode-btn[data-mode="teammate"]   { color: #69f0ae; }
+  .mode-btn[data-mode="opponent"]   { color: #ff5252; }
+  .mode-btn[data-mode="keeper_tm"]  { color: #40c4ff; }
+  .mode-btn[data-mode="keeper_opp"] { color: #ff6d00; }
+
+  .action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .action-sel-btn {
+    padding: 8px 6px;
+    border: 2px solid transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 600;
+    transition: all 0.15s;
+    background: #0f3460;
+    color: #ccc;
+    text-align: center;
+  }
+  .action-sel-btn:hover { filter: brightness(1.2); }
+  .action-sel-btn.active { border-color: currentColor; filter: brightness(1.3); }
+  .action-sel-btn[data-action="Shot"]    { color: #ff5252; }
+  .action-sel-btn[data-action="Pass"]    { color: #69f0ae; }
+  .action-sel-btn[data-action="Carry"]   { color: #fff176; }
+  .action-sel-btn[data-action="Dribble"] { color: #80deea; }
+
+  /* Scores table */
+  .scores-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+    margin-top: 4px;
+  }
+  .scores-table th {
+    text-align: left;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #6c8ebf;
+    padding: 0 2px 6px;
+  }
+  .scores-table th:last-child { text-align: right; }
+  .scores-table td {
+    padding: 5px 2px;
+    border-bottom: 1px solid #0f3460;
+    vertical-align: middle;
+  }
+  .scores-table td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  .scores-table tr.selected-row td { background: rgba(160,196,255,0.08); font-weight: 700; }
+
+  .assumption-note {
+    font-size: 0.68rem;
+    color: #4a6080;
+    margin-top: 8px;
+    font-style: italic;
+    line-height: 1.4;
+  }
+
+  /* xT display */
+  .xt-value {
+    font-size: 3rem;
+    font-weight: 700;
+    text-align: center;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    color: #a0c4ff;
+    padding: 8px 0 2px;
+  }
+  .xt-label { text-align: center; font-size: 0.7rem; color: #6c8ebf; text-transform: uppercase; letter-spacing: 0.1em; }
+
+  .xt-bar {
+    height: 4px; border-radius: 2px; margin-bottom: 10px;
+    background: linear-gradient(to right, #0d0221, #4a0572, #c0392b, #f39c12, #f1c40f);
+    position: relative;
+  }
+  .xt-bar-marker {
+    position: absolute; top: -3px;
+    width: 10px; height: 10px; border-radius: 50%;
+    background: white; transform: translateX(-50%); transition: left 0.2s;
+  }
+
+  /* Pressure badge */
+  .pressure-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    margin-top: 6px;
+  }
+  .pressure-yes { background: #5c0000; color: #ff5252; border: 1px solid #ff5252; }
+  .pressure-no  { background: #003322; color: #69f0ae; border: 1px solid #69f0ae; }
+
+  /* Breakdown table */
+  .breakdown-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+    margin-top: 4px;
+  }
+  .breakdown-table th {
+    text-align: left;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #6c8ebf;
+    padding: 0 2px 6px;
+  }
+  .breakdown-table th:not(:first-child) { text-align: right; }
+  .breakdown-table td {
+    padding: 5px 2px;
+    border-bottom: 1px solid #0f3460;
+    vertical-align: middle;
+  }
+  .breakdown-table td:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .action-dot {
+    display: inline-block;
+    width: 8px; height: 8px; border-radius: 50%;
+    margin-right: 5px; vertical-align: middle;
+  }
+
+  .weight-bar-wrap {
+    display: inline-block;
+    width: 50px; height: 6px;
+    background: #0f3460;
+    border-radius: 3px;
+    vertical-align: middle;
+    margin-left: 6px;
+  }
+  .weight-bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+
+  .best-pass-note {
+    font-size: 0.72rem; color: #6c8ebf; margin-top: 8px; font-style: italic;
+  }
+
+  /* Player list */
+  .player-list { max-height: 160px; overflow-y: auto; font-size: 0.78rem; }
+  .player-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 3px 0; border-bottom: 1px solid #0f3460;
+  }
+  .player-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  .remove-btn { background: none; border: none; color: #ff5252; cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 2px; }
+
+  .clear-btn {
+    width: 100%; padding: 8px;
+    background: #3d0000; border: 1px solid #ff5252; border-radius: 6px;
+    color: #ff5252; cursor: pointer; font-size: 0.82rem; font-weight: 600;
+    margin-top: 8px; transition: background 0.15s;
+  }
+  .clear-btn:hover { background: #5c0000; }
+
+  .coords { font-size: 0.72rem; color: #6c8ebf; text-align: center; margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<h1>SxT v3 — Interactive Predictor</h1>
+<p class="subtitle">Select an action type, place players — end position and pressure are inferred from player layout. Game state is fixed at a neutral baseline (period 1, minute 0, score tied).</p>
+
+<div class="layout">
+  <div id="pitch-wrap">
+    <canvas id="pitch" width="840" height="560"></canvas>
+  </div>
+
+  <div class="panel">
+
+    <!-- Action type selector -->
+    <div class="card">
+      <h2>Action type</h2>
+      <div class="action-grid">
+        <div class="action-sel-btn active" data-action="Shot">🥅 Shot</div>
+        <div class="action-sel-btn"        data-action="Pass">➡ Pass</div>
+        <div class="action-sel-btn"        data-action="Carry">🏃 Carry</div>
+        <div class="action-sel-btn"        data-action="Dribble">⚡ Dribble</div>
+      </div>
+    </div>
+
+    <!-- Placement mode -->
+    <div class="card">
+      <h2>Place on pitch</h2>
+      <div class="mode-grid">
+        <div class="mode-btn active" data-mode="ball_start">⚽ Ball (carrier)</div>
+        <div class="mode-btn"       data-mode="teammate">🟢 Teammate</div>
+        <div class="mode-btn"       data-mode="opponent">🔴 Opponent</div>
+        <div class="mode-btn"       data-mode="keeper_tm">🔵 Our GK</div>
+        <div class="mode-btn"       data-mode="keeper_opp">🟠 Opp GK</div>
+      </div>
+    </div>
+
+    <!-- xT result -->
+    <div class="card">
+      <h2>Expected Threat (xT)</h2>
+      <div class="xt-bar"><div class="xt-bar-marker" id="xt-marker" style="left:0%"></div></div>
+      <div class="xt-value" id="xt-display">—</div>
+      <div class="xt-label" id="xt-label">xT — Shot (v3 CNN + Transformer)</div>
+      <div style="text-align:center">
+        <span class="pressure-badge pressure-no" id="pressure-badge">No pressure</span>
+      </div>
+    </div>
+
+    <!-- Per-action scores -->
+    <div class="card">
+      <h2>Per-action xT scores</h2>
+      <table class="scores-table">
+        <thead>
+          <tr><th>Action</th><th>xT</th></tr>
+        </thead>
+        <tbody id="scores-body">
+          <tr><td colspan="2" style="color:#6c8ebf;font-style:italic;padding:6px 0">Place ball to start</td></tr>
+        </tbody>
+      </table>
+      <div class="best-pass-note" id="best-pass-note"></div>
+      <div class="assumption-note">Game state fixed at neutral baseline: period 1, minute 0, score 0–0. End positions are inferred from player layout.</div>
+    </div>
+
+    <!-- Players on pitch -->
+    <div class="card">
+      <h2>Players on pitch (<span id="player-count">0</span>/22)</h2>
+      <div class="player-list" id="player-list"></div>
+      <button class="clear-btn" id="clear-btn">Clear all players</button>
+    </div>
+
+    <div class="coords" id="coords">Hover over pitch to see coordinates</div>
+
+  </div>
+</div>
+
+<script>
+const PITCH_W = 120, PITCH_H = 80;
+const CANVAS_W = 840, CANVAS_H = 560;
+const scaleX = CANVAS_W / PITCH_W;
+const scaleY = CANVAS_H / PITCH_H;
+
+let mode           = 'ball_start';
+let selectedAction = 'Shot';
+let ballStart = { x: 60, y: 40 };
+let players   = [];
+let nextId    = 0;
+
+const ACTION_COLORS = {
+  Shot:    '#ff5252',
+  Pass:    '#69f0ae',
+  Carry:   '#fff176',
+  Dribble: '#80deea',
+};
+
+const canvas = document.getElementById('pitch');
+const ctx    = canvas.getContext('2d');
+
+function pitchToCanvas(x, y) { return [x * scaleX, y * scaleY]; }
+function canvasToPitch(cx, cy) { return [cx / scaleX, cy / scaleY]; }
+
+// ---------------------------------------------------------------------------
+// Draw
+// ---------------------------------------------------------------------------
+function draw() {
+  ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+  drawPitch();
+  drawPlayers();
+  drawBall();
+}
+
+function drawPitch() {
+  ctx.fillStyle = '#2d5a27';
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+  for (let i = 0; i < 8; i++) {
+    if (i % 2 === 0) {
+      ctx.fillStyle = 'rgba(255,255,255,0.04)';
+      ctx.fillRect(i * CANVAS_W/8, 0, CANVAS_W/8, CANVAS_H);
+    }
+  }
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  ctx.lineWidth = 1.5;
+
+  function line(x1, y1, x2, y2) {
+    const [cx1, cy1] = pitchToCanvas(x1, y1);
+    const [cx2, cy2] = pitchToCanvas(x2, y2);
+    ctx.beginPath(); ctx.moveTo(cx1, cy1); ctx.lineTo(cx2, cy2); ctx.stroke();
+  }
+  function rect(x, y, w, h) {
+    const [cx, cy] = pitchToCanvas(x, y);
+    ctx.strokeRect(cx, cy, w * scaleX, h * scaleY);
+  }
+  function circle(x, y, r) {
+    const [cx, cy] = pitchToCanvas(x, y);
+    ctx.beginPath(); ctx.arc(cx, cy, r * scaleX, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  rect(0, 0, 120, 80);
+  line(60, 0, 60, 80);
+  circle(60, 40, 10);
+  const [ccx, ccy] = pitchToCanvas(60, 40);
+  ctx.beginPath(); ctx.arc(ccx, ccy, 3, 0, Math.PI*2); ctx.fillStyle='white'; ctx.fill();
+
+  rect(0, 18, 18, 44); rect(102, 18, 18, 44);
+  rect(0, 30, 6, 20);  rect(114, 30, 6, 20);
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  rect(-3, 36, 3, 8);  rect(120, 36, 3, 8);
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+
+  for (const [sx, sy] of [[12,40],[108,40]]) {
+    const [scx, scy] = pitchToCanvas(sx, sy);
+    ctx.beginPath(); ctx.arc(scx, scy, 3, 0, Math.PI*2); ctx.fillStyle='white'; ctx.fill();
+  }
+
+  ctx.beginPath();
+  const [p1x, p1y] = pitchToCanvas(12, 40);
+  ctx.arc(p1x, p1y, 10*scaleX, -Math.PI*0.295, Math.PI*0.295, false); ctx.stroke();
+  ctx.beginPath();
+  const [p2x, p2y] = pitchToCanvas(108, 40);
+  ctx.arc(p2x, p2y, 10*scaleX, Math.PI*0.705, Math.PI*1.295, false); ctx.stroke();
+
+  ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  ctx.font = '14px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('▶ Attack', CANVAS_W * 0.75, CANVAS_H - 8);
+}
+
+function drawPlayers() {
+  for (const p of players) {
+    const [cx, cy] = pitchToCanvas(p.x, p.y);
+    const color = playerColor(p);
+    ctx.beginPath(); ctx.arc(cx+1, cy+1, 10, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy, 10, 0, Math.PI*2);
+    ctx.fillStyle = color; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 1.5; ctx.stroke();
+    if (p.keeper) {
+      ctx.beginPath(); ctx.arc(cx, cy, 13, Math.PI*1.15, Math.PI*1.85);
+      ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
+    }
+    ctx.fillStyle = 'white'; ctx.font = 'bold 9px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(p.keeper ? 'GK' : (p.teammate ? 'T' : 'O'), cx, cy);
+  }
+}
+
+function drawBall() {
+  const [sx, sy] = pitchToCanvas(ballStart.x, ballStart.y);
+  ctx.beginPath(); ctx.arc(sx, sy, 11, 0, Math.PI*2);
+  ctx.fillStyle = '#fff176'; ctx.fill();
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = '#333'; ctx.font = 'bold 10px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('⚽', sx, sy);
+}
+
+function playerColor(p) {
+  if (p.keeper &&  p.teammate) return '#40c4ff';
+  if (p.keeper && !p.teammate) return '#ff6d00';
+  if (p.teammate) return '#69f0ae';
+  return '#ff5252';
+}
+
+// ---------------------------------------------------------------------------
+// Interaction
+// ---------------------------------------------------------------------------
+canvas.addEventListener('click', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const cx   = (e.clientX - rect.left) * (CANVAS_W / rect.width);
+  const cy   = (e.clientY - rect.top)  * (CANVAS_H / rect.height);
+  const [px, py] = canvasToPitch(cx, cy);
+  const x = Math.round(px * 10) / 10;
+  const y = Math.round(py * 10) / 10;
+
+  if (mode === 'ball_start') {
+    ballStart = { x, y };
+  } else {
+    if (players.length >= 22) return;
+    const isKeeper   = mode === 'keeper_tm' || mode === 'keeper_opp';
+    const isTeammate = mode === 'teammate'  || mode === 'keeper_tm';
+    players.push({ x, y, teammate: isTeammate, keeper: isKeeper, id: nextId++ });
+  }
+
+  draw(); updatePlayerList(); predict();
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const cx   = (e.clientX - rect.left) * (CANVAS_W / rect.width);
+  const cy   = (e.clientY - rect.top)  * (CANVAS_H / rect.height);
+  const [px, py] = canvasToPitch(cx, cy);
+  document.getElementById('coords').textContent =
+    `x: ${px.toFixed(1)}  y: ${py.toFixed(1)}  (StatsBomb coords)`;
+});
+
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    mode = btn.dataset.mode;
+  });
+});
+
+document.querySelectorAll('.action-sel-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.action-sel-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedAction = btn.dataset.action;
+    document.getElementById('xt-label').textContent =
+      `xT — ${selectedAction} (v3 CNN + Transformer)`;
+    predict();
+  });
+});
+
+document.getElementById('clear-btn').addEventListener('click', () => {
+  players = []; draw(); updatePlayerList(); predict();
+});
+
+// ---------------------------------------------------------------------------
+// Player list
+// ---------------------------------------------------------------------------
+function updatePlayerList() {
+  const list = document.getElementById('player-list');
+  document.getElementById('player-count').textContent = players.length;
+
+  list.innerHTML = players.map(p => {
+    const color = playerColor(p);
+    const label = p.keeper
+      ? (p.teammate ? 'Our GK' : 'Opp GK')
+      : (p.teammate ? 'Teammate' : 'Opponent');
+    return `
+      <div class="player-item">
+        <span>
+          <span class="player-dot" style="background:${color}"></span>
+          ${label} (${p.x}, ${p.y})
+        </span>
+        <button class="remove-btn" data-id="${p.id}">×</button>
+      </div>`;
+  }).join('');
+
+  list.querySelectorAll('.remove-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = parseInt(btn.dataset.id);
+      players = players.filter(p => p.id !== id);
+      draw(); updatePlayerList(); predict();
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Predict
+// ---------------------------------------------------------------------------
+async function predict() {
+  const body = {
+    start_x:     ballStart.x,
+    start_y:     ballStart.y,
+    action_type: selectedAction,
+    players:     players.map(p => ({ x: p.x, y: p.y, teammate: p.teammate, keeper: p.keeper })),
+  };
+
+  try {
+    const res  = await fetch('/predict', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    const xt   = data.xt;
+
+    // xT display
+    document.getElementById('xt-display').textContent = xt.toFixed(5);
+    const norm = Math.min(xt / 0.5, 1.0);
+    const r = Math.round(norm * 255);
+    const g = Math.round(160 + (1 - norm) * 95);
+    const b = Math.round(255 * (1 - norm));
+    document.getElementById('xt-display').style.color = `rgb(${r},${g},${b})`;
+    document.getElementById('xt-marker').style.left = `${Math.min(norm * 100, 100)}%`;
+
+    // Pressure badge
+    const badge = document.getElementById('pressure-badge');
+    if (data.under_pressure) {
+      badge.textContent = '⚠ Under pressure';
+      badge.className = 'pressure-badge pressure-yes';
+    } else {
+      badge.textContent = 'No pressure';
+      badge.className = 'pressure-badge pressure-no';
+    }
+
+    // Per-action scores table
+    const tbody = document.getElementById('scores-body');
+    tbody.innerHTML = data.scores.map(row => {
+      const color = ACTION_COLORS[row.action] || '#aaa';
+      return `<tr class="${row.selected ? 'selected-row' : ''}">
+        <td>
+          <span class="action-dot" style="background:${color}"></span>${row.action}
+        </td>
+        <td style="color:${color}">${row.xt.toFixed(5)}</td>
+      </tr>`;
+    }).join('');
+
+    // Best pass note (only shown when Pass is selected)
+    const note = document.getElementById('best-pass-note');
+    if (data.best_pass_pos) {
+      note.textContent = `Best target → teammate at (${data.best_pass_pos[0]}, ${data.best_pass_pos[1]})`;
+    } else {
+      note.textContent = '';
+    }
+
+  } catch (err) {
+    document.getElementById('xt-display').textContent = 'ERR';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+draw();
+predict();
+</script>
+</body>
+</html>

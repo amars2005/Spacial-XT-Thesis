@@ -1,0 +1,35 @@
+\chapter{Introduction}\label{ch:intro}
+
+Expected Goals (xG) is a metric widely used in modern football analytics to quantify the quality of scoring chances \cite{rathke2017,statsbomb2018}. Traditional xG models focus exclusively on shots, estimating the probability that a given attempt results in a goal based on factors such as distance, angle, and shot type \cite{lucey2015}. However, this approach captures only a small slice of a football match; the vast majority of play consists of passes, carries, and dribbles that build towards a scoring opportunity. In a typical professional game, shots account for fewer than 2\% of all on-ball events \cite{pappalardo2019}, meaning that the standard framework assigns no quantified threat value to the other 98\%.
+
+This project develops a Spatial Expected Threat (SxT) model, which assigns a probability to every event in a match (pass, carry, dribble, or shot) reflecting how likely that possession chain is to end in a goal. The project progresses through three increasingly sophisticated model versions:
+
+\begin{enumerate}
+    \item \textbf{Version 1}: A Random Forest model trained on ten scalar features (position, angle, distance, action type, period, minute, score differential, and team form) extracted from raw StatsBomb event data.
+    \item \textbf{Version 2}: A dual-branch Convolutional Neural Network (CNN) and Multi-Layer Perceptron (MLP), exploiting StatsBomb 360 freeze-frame data to encode the positions of all players on the pitch as spatial image channels.
+    \item \textbf{Version 3}: A two-stage architecture that freezes the trained Version 2 CNN and adds a Transformer-based cross-attention layer, allowing the model to explicitly reason about the spatial relationships between players when estimating threat.
+\end{enumerate}
+
+A Flask-based interactive web frontend accompanies Version 3, allowing users to place players on a virtual pitch, select an action type, and receive a real-time per-action xT prediction.
+
+\section{Novel Contributions}
+
+Our novel contribution is the usage of Statsbomb's 360 freeze-frame data, to encode player positioning into a threat value model, using CNNs and Transformers.
+
+Singh's influential xT framework \cite{singh2019} models the pitch as a discrete grid of zones with fixed threat values, which is interpretable but fundamentally limited by its coarse discretisation and inability to incorporate player context. This project replaces the hand-crafted grid with a dual-branch CNN trained end-to-end on raw event data, encoding the positions of all 22 players as a multi-channel pitch image \cite{statsbomb360} and learning a continuous, player-aware threat surface directly from millions of possession sequences; this is the project's largest measured gain (ROC AUC $0.68 \to 0.83$). VAEP \cite{decroos2019} also doesn't recognise the usefulness of player positioning data, and we create a significant improvement from their metrics based on our inclusion of it. 
+
+Version 3 introduces a two-stage frozen-backbone architecture in which a Transformer \cite{vaswani2017} attends over individual player tokens, using the Stage 1 threat estimate (logit) as the cross-attention query, asking what adjustment the player positions warrant given the baseline threat level. 
+
+ A common evaluation framework also (ROC AUC, Brier Score, Log Loss) runs identically across all three versions, making comparisons directly meaningful. Prior comparisons between non-shot threat models and VAEP~\cite{decroos2019} are confounded by dataset differences (StatsBomb vs Wyscout), differing event taxonomies, and incompatible test populations. VAEP is trained and evaluated on the same StatsBomb train/test split using the official \texttt{socceraction} library, giving the first head-to-head comparison on shared data. VAEP achieves ROC AUC 0.7359, above Version 1 (0.6840) and approximately 10 AUC points below Versions 2 and 3 (0.8297, 0.8363), proving that under a controlled evaluation, our SxT model significantly outperforms the old VAEP model.
+
+\section{Project Objectives}
+\begin{enumerate}
+    \item Develop a baseline SxT model using a classical machine learning approach on tabular positional and action-type features.
+    \item Improve on this baseline by incorporating full player positional context through a deep learning architecture that encodes the pitch as a spatial image.
+    \item Investigate whether explicit relational reasoning over individual player positions, via a Transformer-based attention mechanism, further improves on the spatial model, and characterise the outcome honestly through controlled ablation whether the result is positive or negative.
+    \item Establish a standardised, shared evaluation framework to measure and compare model quality across all three versions using a consistent set of metrics.
+    \item Build an accessible interactive tool that allows users to visualise model predictions and explore how player positioning affects expected threat in real time.
+\end{enumerate}
+
+\section{Report Structure}
+The remainder of this report is structured as follows. Chapter~\ref{ch:background} reviews relevant prior work on expected goals, non-shot threat metrics, and the machine learning architectures used in this project. Chapter~\ref{ch:dataset} describes the StatsBomb open dataset and how it was processed into training data, including an exploratory analysis of the data. Chapter~\ref{ch:features} defines the input features used across all three versions. Chapter~\ref{ch:methodology} explains the machine learning techniques employed. Chapter~\ref{ch:eval} describes the evaluation framework and the four metrics used. Chapters~\ref{ch:v1}, \ref{ch:v2}, and \ref{ch:v3} present the architecture, training procedure, and results for each model version. Chapter~\ref{ch:comparison} brings the results together in a comparative evaluation. Chapter~\ref{ch:viz} describes the visualisation tools and interactive frontend. Chapter~\ref{ch:conclusion} concludes and identifies directions for future work.

@@ -1,0 +1,110 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Spatial Expected Threat (SxT): A Deep Learning Approach
+% to Modelling Attacking Threat in Football
+% Adam Marshall — Imperial College London, Department of Mathematics
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\documentclass[a4paper,11pt,twoside]{report}
+
+%% Language and font encodings
+\usepackage[english]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+
+%% Page size and margins
+\usepackage[a4paper,top=1in,bottom=1in,left=1in,right=1in,marginparwidth=1.75cm]{geometry}
+
+%% Core packages
+\usepackage{afterpage}
+\usepackage{amsmath}
+\usepackage{amsthm}
+\usepackage{amssymb}
+\usepackage{bm}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{csquotes}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage[normalem]{ulem}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,shapes.geometric}
+
+%% Caption formatting
+\captionsetup[figure]{labelfont={bf},name={Figure},labelsep=quad}
+\captionsetup[table]{labelfont={bf},name={Table},labelsep=quad}
+
+%% Hyperlinks
+\usepackage[colorlinks=true,allcolors=blue]{hyperref}
+
+%% Bibliography
+\usepackage[numbers,comma,square,sort&compress]{natbib}
+\bibliographystyle{abbrvunsrtnat}
+
+%% Font
+\renewcommand*{\rmdefault}{bch}
+\renewcommand*{\ttdefault}{lmtt}
+
+%% Paragraph spacing
+\setlength{\parskip}{0.5em}
+
+%% Math operators
+\DeclareMathOperator*{\argmin}{\arg\!\min}
+\DeclareMathOperator*{\argmax}{\arg\!\max}
+
+%% Title page fields
+\newcommand{\reporttitle}{Spatial Expected Threat (SxT): A Deep Learning Approach to Modelling Attacking Threat in Football}
+\newcommand{\reportauthor}{Adam Marshall}
+\newcommand{\supervisor}{Dr Ioanna Papatsouma \& Sam Brzezicki}
+\newcommand{\degreetype}{BEng in Joint Mathematics and Computer Science}
+
+\begin{document}
+
+% Title page
+\input{title/title.tex}
+
+% Abstract
+\begin{abstract}
+Expected Goals (xG) is the dominant metric in modern football analytics, but it evaluates shots only, accounting for fewer than 2\% of all possession events. The remaining 98\%, comprising every pass, carry, and dribble that builds towards a scoring opportunity, carry no quantified threat value under the standard framework.
+
+This project develops a Spatial Expected Threat (SxT) model that assigns a goal probability to every on-ball event in a match, progressing through three increasingly sophisticated architectures. A controlled head-to-head benchmark, tested on the same set of matches, places VAEP at ROC AUC 0.736. Version 1 uses a Random Forest trained on ten scalar features covering ball position, distance and angle to goal, action type, match period, elapsed minute, running score differential, and team form, extracted from the full StatsBomb open dataset (3,464 matches, 6.1 million events). This returns a ranking score of 0.68, working below our baseline. To improve on this, version 2 replaces this with a dual-branch Convolutional Neural Network that encodes the pitch as a six-channel spatial image using StatsBomb 360 freeze-frame data, incorporating the positions of all 22 players; this learned spatial threat surface is the project's central result, lifting ranking performance (ROC AUC) from 0.68 to 0.83; our 360 freeze-frame spatial data beats the baseline significantly. Version 3 adds a Transformer-based cross-attention layer on top of the frozen Version 2 CNN, treating each player as an individual token, to test whether explicit relational reasoning about defensive formations improves on the CNN's aggregate spatial encoding. The further gain is modest (ROC AUC 0.830 $\to$ 0.836) yet statistically significant ($p = 0.017$). Using a controlled ablation, we find that roughly 85\% of this gain comes from an added correction layer rather than the player-token attention itself, however, with the multi-query extension ($K=8$) we demonstrate that the player-token signal can be increased to 30\% of the total gain.
+
+A standardised evaluation framework across all three versions (using ROC AUC, Brier Score and Log Loss) makes the progression directly legible. An interactive Flask-based frontend accompanies Version 3, allowing users to place players on a virtual pitch and explore predicted threat values in real time.
+\end{abstract}
+
+\clearpage
+\section*{Acknowledgements}
+I would like to thank my supervisors, Dr Ioanna Papatsouma and Sam Brzezicki, for their guidance and support throughout this project. I am grateful to StatsBomb for making their event data and 360 freeze-frame data freely available for academic and non-commercial use. Model training was carried out on an NVIDIA RTX 6000 Ada GPU.
+\clearpage
+
+\section*{Plagiarism Statement}
+The work contained in this thesis is my own work unless otherwise stated.
+
+\vspace{1em}
+\noindent \textit{Signature:} \reportauthor \\
+\textit{Date:} \today
+\clearpage
+
+\tableofcontents
+\clearpage
+
+% Chapters
+\input{chapters/introduction.tex}
+\input{chapters/background.tex}
+\input{chapters/dataset.tex}
+\input{chapters/features.tex}
+\input{chapters/methodology.tex}
+\input{chapters/evaluation.tex}
+\input{chapters/v1.tex}
+\input{chapters/v2.tex}
+\input{chapters/v3.tex}
+\input{chapters/comparison.tex}
+\input{chapters/visualisations.tex}
+\input{chapters/conclusion.tex}
+
+\appendix
+\input{appendix/code.tex}
+\input{appendix/metrics.tex}
+\input{appendix/figures.tex}
+
+\bibliography{bibliography}
+
+\end{document}

@@ -1,0 +1,10 @@
+{
+  "n_carries": 217606,
+  "n_matches_used": 292,
+  "n_matches_skipped": 0,
+  "median_distance": 4.060788100849392,
+  "mean_distance": 6.298273478725885,
+  "p25_distance": 1.7464249196572939,
+  "p75_distance": 8.237718130647583,
+  "unit": "StatsBomb coordinate units (~1 unit per metre on a 120x80 pitch)"
+}

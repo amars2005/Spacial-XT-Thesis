@@ -1,0 +1,112 @@
+\chapter{Dataset}\label{ch:dataset}
+
+\section{The StatsBomb Open Dataset}
+
+The StatsBomb open dataset~\cite{statsbomb2018} is a large, freely available collection of football event data covering over 3,400 matches across multiple leagues and competitions. Each match is stored as a JSON file containing second-level event timestamps, the start and end coordinates of the ball on every on-ball action (passes, carries, shots, dribbles, and more), and structured outcome labels. The dataset is accessed programmatically via the StatsBombPy Python library~\cite{statsbombpy}, which provides a clean interface for querying competitions, matches, and individual event records.
+
+The coordinate system spans a 120$\times$80 metre grid (StatsBomb coordinate space), with the attacking goal located at $(120, 40)$. All three model versions use this coordinate space directly for spatial feature extraction.
+
+From Version 2 onwards, the model also makes use of StatsBomb's \textbf{360 data}~\cite{statsbomb360}. For a subset of 425 matches, StatsBomb provides freeze-frame snapshots: at the moment of each tracked event, the exact positions of all visible players on the pitch are recorded. This data enables the model to see not just where the ball is, but where every player is at the exact moment of each action, a significant upgrade over the standard event data alone.
+
+\section{Data Pipeline}\label{sec:pipeline}
+
+For Version 1, events are filtered to passes, carries, and shots, and their relevant scalar features are extracted into a flat CSV file using StatsBombPy. For Versions 2 and 3, which require 360 freeze-frame data, a more complex pipeline encodes each event as a multi-channel spatial tensor (a 2D grid representing the pitch) alongside a scalar feature vector, with each match saved as a compressed \texttt{.npz} file for efficient training.
+
+The full implementation of both pipelines is available in Appendix~\ref{app:code}.
+
+\section{Possession Chains and Labels}\label{sec:chains}
+
+In order for each possession event to carry an accurate measure of its contribution to goal-scoring, events are grouped into possession chains so that every pass or carry within a continuous attacking sequence leading to a goal is assigned a positive label.
+
+A new possession chain begins whenever any of the following conditions are met: the match or period changes, the team in possession changes, or the previous event was a shot (possession always ends after a shot, regardless of outcome). For all three versions, each event in a goal-scoring chain is assigned a binary label of 1 (goal chain) and all other events are assigned 0 (no goal chain). This labelling scheme means the model is trained to predict $P(\text{goal chain})$, i.e.\ the probability that the current possession sequence ends in a goal. The construction is philosophically similar to the goal-probability label used by Decroos et al.\ in VAEP~\cite{decroos2019} (that work labels an action as positive if the possessing team scores within the next $k$ actions), though we label at the possession-chain level (all events in a goal-scoring chain share the positive label) rather than using a fixed look-ahead window.
+
+\section{Train, Validation, and Test Split}
+
+All three versions use a 70/15/15 train/validation/test split performed at the \textbf{match level}, not the event level. Splitting by match is important because events within the same match are not independent: they share the same teams, match state, and game context. If events from the same match appeared in both training and test sets, the model could learn match-specific patterns that would inflate its apparent performance on unseen data. Using a fixed random seed of 42 makes the partition reproducible across all runs.
+
+The full Version 1 dataset contains 3,464 matches and 6,108,353 events. Applying the 70/15/15 split gives:
+
+\begin{itemize}
+    \item \textbf{Training}: 2,424 matches, 4,284,580 events
+    \item \textbf{Validation}: 520 matches, 913,800 events
+    \item \textbf{Test}: 520 matches, 909,973 events
+\end{itemize}
+
+For Versions 2 and 3, the dataset is restricted to the 425 matches for which StatsBomb 360 freeze-frame data is available. Of these, 418 yield at least one usable freeze-frame event after processing; the remaining 7 are skipped at the data-build step because their freeze-frame records are absent or empty in the StatsBomb API response, contributing no events. This gives a smaller but richer set of 1,400,053 events. Applying the same 70/15/15 split to the 418 usable matches gives:
+
+\begin{itemize}
+    \item \textbf{Training}: 292 matches, 981,949 events
+    \item \textbf{Validation}: 62 matches, 218,316 events
+    \item \textbf{Test}: 64 matches, 199,788 events
+\end{itemize}
+
+Version 3 saves its test match IDs to a \texttt{test\_match\_ids.json} file, and Version 2's evaluation script loads that file to ensure both models are evaluated on exactly the same 64 test matches (199,788 events). Any difference in the Version 2 and Version 3 test metrics therefore reflects the architecture change alone, not a difference in what was tested.
+
+Full dataset statistics are tabulated in Appendix~\ref{app:metrics}.
+
+\section{Exploratory Data Analysis}\label{sec:eda}
+
+Before training, it is useful to understand the structure of the dataset and any characteristics that might affect modelling decisions.
+
+\subsection{Class Imbalance}
+
+The most significant characteristic of the dataset is its severe class imbalance. Goal-scoring possession chains are rare by nature: across the full Version 1 dataset, only approximately 1.74\% of events belong to a goal-scoring chain. Figure~\ref{fig:class_balance} illustrates the split.
+
+
+This imbalance has direct consequences for modelling and evaluation. A trivial classifier that always predicts ``no goal chain'' would be correct 99.68\% of the time but would be entirely useless. This motivates the use of ROC AUC as the primary metric (which explicitly accounts for imbalance) and the positive class weighting applied in the V2 and V3 loss functions. The 1.74\% positive rate is consistent with class distributions reported in related possession-value work: Decroos et al.~\cite{decroos2019} note a similarly low base rate for goal-scoring events in VAEP, confirming that extreme class imbalance is an inherent property of the task regardless of the labelling scheme used.
+
+\subsection{Event Type Distribution}
+
+Figure~\ref{fig:event_types} shows the distribution of on-ball event types across the dataset. Passes dominate, accounting for the majority of events, followed by carries and ball receipts. Shots are a small minority, confirming that a shot-only xG model is blind to the vast bulk of match activity. This distribution also explains why the action-type one-hot features contribute relatively little in Version 1 (see Section~\ref{sec:v1_features}): the model rarely needs to distinguish action types to predict threat, as position dominates.
+
+
+\subsection{Spatial Distribution of Events}
+
+Figure~\ref{fig:spatial_density} shows where events occur on the pitch across the full dataset. Activity is distributed across the whole pitch but is noticeably denser in central areas and around the penalty box, reflecting the concentration of play during build-up phases. The attacking third shows elevated density near the goal, corresponding to shots and final-third passes. This spatial structure motivates the use of pitch-position features and, ultimately, the CNN's spatial encoding.
+
+
+\subsection{Goal Chain Event Locations}
+
+Figure~\ref{fig:goal_chain_locs} compares where goal-chain events occur versus background events. Goal-chain events are heavily concentrated in the attacking third, particularly around and inside the penalty area, so the model must learn that proximity to goal is the dominant driver of threat. This directly corroborates the Version 1 feature importance finding (Section~\ref{sec:v1_importance}) that \texttt{dist\_to\_goal} accounts for nearly 40\% of the Random Forest's predictive power. The spatial concentration is consistent with prior work: Rathke et al.~\cite{rathke2017} and Lucey et al.~\cite{lucey2015} both confirm that distance and angle to goal are the primary predictors of shot quality in professional football, and the same spatial logic extends to non-shot events building toward a scoring chance.
+
+
+\subsection{Goal-Chain Rate by Event Type}
+
+Figure~\ref{fig:goal_rate_type} shows the goal-chain rate broken down by event type. Shots have by far the highest rate, as expected: a shot is the final event of any goal-scoring chain. Among non-shot actions, dribbles and carries also show elevated rates, reflecting their role in breaking defensive lines and creating shooting opportunities. Pappalardo et al.~\cite{pappalardo2019} report a  dominance of passes in large-scale European event datasets, stating that a non-shot threat model must handle passes as the primary action category by volume, whereas out largest non-shot category is a carry. This leads to the use of discrete action types encoded into our model, and the selection of shots, passes and carries as the ones used.
+
+
+\subsection{Goal-Chain Rate by Pitch Zone}
+
+Figure~\ref{fig:goal_rate_zone} visualises the goal-chain rate as a heatmap across the pitch. The gradient is sharp: rates near the attacking penalty area are many times higher than those in defensive or midfield zones, directly motivating the use of position-based features and, ultimately, the CNN's learned spatial encoding.
+
+
+\subsection{Possession Chain Lengths}
+
+Figure~\ref{fig:chain_lengths} compares the distribution of chain lengths (number of events) between goal-scoring chains and background chains. Goal chains tend to be shorter on average, suggesting that the most dangerous attacks are often direct rather than lengthy build-up sequences. The heavy right tail in both distributions reflects that occasional long possession spells exist in both categories, but background chains extend further. Decroos et al.~\cite{decroos2019} operationalise this observation by adopting a $k = 10$ action look-ahead window for their VAEP label; the short chain lengths observed here confirm that a $k \leq 10$ horizon captures most goal-scoring sequences, supporting the possession-chain labelling scheme used in this project. However, as not all chains stay in this window, we have elected to take all chains no matter the length.
+
+
+\subsection{Event Types by Pitch Third}
+
+Figure~\ref{fig:action_by_third} shows how the distribution of event types varies across the three pitch thirds. Passes dominate in all thirds, but the attacking third sees a higher proportion of shots and carries. This spatial variation in action-type distribution motivates including both position and action type as features rather than relying on either alone.
+
+\subsection{Implications for Modelling}
+
+The EDA findings inform the architectural choices made across the three model versions in a direct way. First, the sharp spatial concentration of goal-chain events around the attacking penalty area (Figures~\ref{fig:goal_chain_locs} and \ref{fig:goal_rate_zone}) establishes that spatial proximity to goal is the dominant signal, and any model that encodes position well should capture this. Version 1's Random Forest does so implicitly via distance and coordinate features; Version 2's CNN learns it as a continuous spatial filter. The V2 heatmap (Chapter~\ref{ch:v2}) reproducing exactly the same gradient seen in Figure~\ref{fig:goal_rate_zone} is therefore evidence that the CNN is learning a genuine data signal, not a spurious artefact.
+
+Second, the finding that goal chains are \emph{shorter} than background chains (Figure~\ref{fig:chain_lengths}) supports the ball-start-position framing adopted here over a deep-sequential approach: the most dangerous attacks are direct, so the instantaneous ball position and player configuration at the moment of an action carries most of the predictive information. A simple event-level label is therefore well-matched to the data structure.
+
+Third, the 360 freeze-frame analysis (Section~\ref{sec:eda_360}) confirms that the attacking and defending teams occupy spatially distinct regions (Figure~\ref{fig:team_positions}) and that most events capture near-complete player information (Figure~\ref{fig:player_count}). This validates both the choice of a spatial density encoding (Version 2) and the individual-player token representation (Version 3): the signal is present in the data and most events have enough visible players for either representation to be meaningful.
+
+
+\subsection{360 Freeze-Frame Analysis}\label{sec:eda_360}
+
+The following plots are derived from the 425 matches with StatsBomb 360 data, used in Versions 2 and 3.
+
+Figure~\ref{fig:player_density} shows the overall density of player positions across all freeze-frame events. Players cluster heavily around the ball location and in central areas, with lower density on the flanks and near the corners.
+
+
+Figure~\ref{fig:team_positions} separates freeze-frame positions by team. The attacking team clusters near the ball and in the opponent's half; the defending team organises in front of their own goal. This clear spatial separation is the signal that the Version 3 Transformer attempts to exploit. The pattern is consistent with the positional structures underlying pitch-control models~\cite{spearman2018} and EPV~\cite{fernandez2019epv}: both confirm that attacking and defending teams occupy geometrically distinct regions of the pitch, with defenders organised between the ball and their goal.
+
+
+Figure~\ref{fig:player_count} shows the distribution of visible player counts per freeze-frame event. Most events capture close to the full complement of 22 players, with a mean of approximately 15.7. The minority of events with fewer visible players motivates the use of padding masks in the Transformer, which allow the model to ignore absent (padded) player slots during attention.
+

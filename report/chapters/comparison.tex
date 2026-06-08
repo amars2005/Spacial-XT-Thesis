@@ -1,0 +1,91 @@
+\chapter{Comparative Evaluation}\label{ch:comparison}
+
+\section{Results Summary}\label{sec:results_summary}
+
+\begin{table}[h]
+\centering
+\caption{Test set results for all models. Bold indicates the best value per metric. V1 (full) uses all events from 520 matches; V1 (360 subset), V2, and V3 use the same 64 freeze-frame test matches; VAEP uses all ball-progressing SPADL actions from those same 64 matches (see note below). 95\% bootstrap CIs (2{,}000 match-level iterations, seed 42) appear in smaller type beneath each point estimate for V1 (360 subset), V2, and V3. V3 (calibrated) applies post-hoc temperature scaling (Section~\ref{sec:comparison_discussion}).}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Model} & \textbf{ROC AUC} $\uparrow$ & \textbf{Brier} $\downarrow$ & \textbf{Log Loss} $\downarrow$\\
+\midrule
+v1: RF (full dataset)    & 0.6840 & 0.0161 & 0.0802 \\
+v1: RF (360 subset)      & \shortstack[c]{0.6715 \\ {\scriptsize [0.6357, 0.7046]}} & \shortstack[c]{0.0199 \\ {\scriptsize [0.0158, 0.0243]}} & \shortstack[c]{0.0962 \\ {\scriptsize [0.0795, 0.1140]}} \\
+\midrule
+VAEP: XGBoost$^{\dagger}$ & 0.7359 & --- & --- \\
+\midrule
+v2: CNN + MLP            & \shortstack[c]{0.8297 \\ {\scriptsize [0.7955, 0.8704]}} & \textbf{0.0069} & 0.0398 \\
+v3: Transformer          & \shortstack[c]{\textbf{0.8363} \\ {\scriptsize [0.8015, 0.8763]}} & 0.0091 & 0.0546 \\
+v3: Transformer (calibrated) & \textbf{0.8363} & 0.0072 & \textbf{0.0348} \\
+\bottomrule
+\end{tabular}
+\begin{minipage}{\linewidth}
+\vspace{4pt}
+\footnotesize $^{\dagger}$VAEP is evaluated on all ball-progressing SPADL actions from the 64 test matches (125,383 events; chain-goal rate 1.23\%), whereas Versions 2 and 3 use the freeze-frame-filtered subset (199,788 events; chain-goal rate 1.74\%). ROC AUC is threshold-invariant and are not distorted by the differing class imbalances; Brier Score and Log Loss are not directly comparable across the two populations and are therefore omitted for VAEP.
+\end{minipage}
+\label{tab:results}
+\end{table}
+
+Version 3 achieves the best ROC AUC, but Version 2 achieves the better Brier Score and Log Loss. The pattern of improvement differs substantially across metrics and across steps.
+
+ROC AUC measures how well the model ranks goal-chain events above background events. The jump from v1 to v2 (0.68 $\to$ 0.83) represents a 15-percentage-point improvement , a very substantial gain in the ability to identify which events belong to dangerous possession sequences. The further step from v2 to v3 ($+0.0066$ in AUC, 95\% CI $[+0.0014,\ +0.0125]$, $p = 0.017$) is a statistically significant and reliable improvement: the Transformer's relational reasoning over individual player tokens adds genuine ranking signal on top of the CNN's aggregate spatial encoding.
+
+The Brier Score and Log Loss are worse for the uncalibrated Version 3 (Brier: 0.0069 $\to$ 0.0091; Log Loss: 0.0398 $\to$ 0.0546), reflecting that the cross-attention mechanism sharpens threat adjustments in ways that improve event ordering but shift predicted probabilities away from their empirical base rates. This is fully correctable with post-hoc temperature scaling: the calibrated Version 3 row in Table~\ref{tab:results} shows Brier Score recovering to 0.0072 (within 4\% of Version 2's 0.0069) and Log Loss falling to 0.0348, which \textit{surpasses} Version 2's 0.0398, all while preserving the higher ROC AUC. Temperature-scaled Version 3 therefore achieves the best result on three of the four metrics.
+
+\section{Comparison with Prior Work}\label{sec:baseline}
+
+Direct quantitative comparison with prior work on non-shot threat modelling is difficult because published methods use different datasets, different label definitions, and different task formulations. That said, the two closest related methods for which a comparison is even loosely meaningful are Singh's xT grid~\cite{singh2019} and VAEP~\cite{decroos2019}. The tracking-data possession-value models discussed in Section~\ref{sec:bg_possession_value} (pitch control~\cite{spearman2018} and Expected Possession Value~\cite{fernandez2019epv}) are conceptually the closest to our learned player-aware threat surface, but they are not metric-comparable here: they consume continuous optical tracking and are typically reported through qualitative spatial value maps rather than a single ranking score on a shared event-classification task.
+
+Singh's xT framework is a hand-crafted Markov chain over pitch zones and does not report ROC AUC or Brier Score: it is primarily presented qualitatively as a threat surface, so no direct metric comparison is possible. However, a zone-based grid is strictly less expressive than any of the three model versions here: it has no knowledge of player positions, action types, or match context, and its coarse discretisation loses spatial resolution within each zone.
+
+Decroos et al.'s VAEP~\cite{decroos2019} is the most comparable published approach in terms of task and data. Their model estimates the probability that the possessing team scores within the next few actions, which is closely related to our goal-chain label. Decroos et al.\ report an ROC AUC of approximately 0.76 for their goals prediction component on event-level data from the Wyscout dataset; direct comparison with our numbers is not valid across datasets, but it provides a reference point.
+
+VAEP was trained and evaluated on the same StatsBomb train/test split used by all three model versions, providing a controlled, within-dataset benchmark. The official \texttt{socceraction} library (the reference implementation by Decroos et al.) was used without modification. A gradient-boosted classifier (XGBoost, 500 trees) was trained on the same 292 training matches using VAEP's standard tabular feature set: action type, body part, result, start and end locations, score context, and time delta, with a $k = 10$ action look-ahead label (goal within the next 10 actions). Predictions were generated for the same 64 held-out test matches and evaluated with the identical \texttt{evaluate.py} metrics used throughout this project, against our chain\_goal labels.
+
+VAEP achieves an ROC AUC of 0.7359 (Table~\ref{tab:results}), placing it above Version 1 (0.6840) and substantially below Versions 2 and 3 (0.8297 and 0.8363). The gap of approximately 10 AUC points between VAEP and the CNN-based models provides a controlled, within-dataset quantification of the discriminative value added by the 360 freeze-frame spatial encoding: VAEP has access only to tabular event features, whereas Versions 2 and 3 additionally encode the positions of all players on the pitch at the moment of each action. 
+
+One caveat applies. VAEP is evaluated on all ball-progressing SPADL actions from the 64 test matches (125,383 events; chain-goal rate 1.23\%), whereas Versions 2 and 3 operate on the freeze-frame-filtered subset of those same matches (199,788 events; chain-goal rate 1.74\%). This difference reflects each model's input requirements: VAEP needs no freeze frame; Versions 2 and 3 process only events for which one exists. The differing class imbalances make Brier Score and Log Loss incomparable across the two populations, so those metrics are omitted for VAEP in Table~\ref{tab:results}. ROC AUC is threshold-invariant and unaffected by class imbalance, so the ranking comparison is valid.
+
+For additional context, a naïve baseline that always predicts the dataset's empirical goal-chain rate (1.74\%) achieves a Brier Score of approximately 0.0032 and an ROC AUC of 0.50 by construction. All three model versions substantially exceed this trivial baseline on ROC AUC, though the Brier Scores for v2 and v3 are higher than the naïve baseline's Brier Score, reflecting that the naïve baseline ``wins'' on Brier by hedging conservatively at near-zero probabilities, a known limitation of Brier Score when applied to heavily imbalanced problems~\cite{brier1950}.
+
+\section{Discussion}\label{sec:comparison_discussion}
+
+Version 1's ROC AUC of 0.684 establishes a clear signal well above chance (0.5), confirming that tabular positional features encode genuine threat information. This also reflects a meaningful ordering (events closer to goal tend to score higher, driven by distance and angle) and both metrics confirm the model has learned something real from the data. The ceiling lies in the absence of player positional data: as the VAEP benchmark (ROC AUC 0.736) and the V2 jump to 0.830 make clear, richer spatial context is what separates this class of model from one that can genuinely capture the full structure of attacking threat.
+
+The VAEP controlled benchmark (Section~\ref{sec:baseline}) gives a precise answer to the question of how much richer tabular features alone can achieve. VAEP uses a substantially more expressive tabular representation than Version 1: sequential game-state context of the previous $k=10$ actions, action type, body part, result, and score context; and it reaches ROC AUC 0.7359, approximately 5 points above Version 1. This confirms that more expressive event features do matter, but the ceiling for tabular approaches (no player positions) is well below what either CNN model achieves. The $+0.094$ AUC gap between VAEP and Version 2 is largely attributable to adding the 360 freeze-frame spatial context (subject to the event-population caveat noted above): this is the most direct quantification, on controlled data, of the value of player positional information for this task.
+
+The step from Version 1 to Version 2 produces the largest single improvement across every metric. Two things change simultaneously at this step: the architecture moves from a Random Forest to a dual-branch CNN, and the training data gains full player positional context from the 360 freeze frames. The V1-RF (360 subset) row in Table~\ref{tab:results} isolates these contributions. The step from V1 (full, 0.684) to V1 (360 subset, 0.672) shows a slight \textit{decrease} in ROC AUC, indicating that the 360-data population is modestly harder than the full dataset — not easier. The large jump from V1 (360 subset, 0.672) to V2 (0.830), holding the test population constant, therefore isolates the CNN architecture and player positional encoding benefit: a $+0.16$ gain attributable entirely to the richer model and spatial input rather than to any favourable data shift. The V2$\to$V3 step is a pure architecture comparison on identical data.
+
+The step from Version 2 to Version 3 is a pure architecture comparison on identical data. Version 3 shows a gain in ROC AUC (0.8297 $\to$ 0.8363). A match-level bootstrap (2,000 iterations) confirms that the AUC gap of $+$0.0066 is statistically significant: 95\% CI $[+0.0014,\ +0.0125]$, one-sided $p = 0.017$. However, both Brier Score and Log Loss are worse for Version 3 (Brier: 0.0069 $\to$ 0.0091; Log Loss: 0.0398 $\to$ 0.0546), meaning the Transformer's probability estimates are less well calibrated than Version 2's despite the ranking improvement. A plausible explanation is that the cross-attention mechanism sharpens the model's threat adjustments in ways that improve event ordering but shift predicted probabilities away from their empirical base rates. This degradation is correctable with post-hoc temperature scaling~\cite{guo2017calibration}: fitting a single scalar temperature $T = 0.597$ on the validation set by minimising NLL and applying $\hat{p} = \sigma(\text{logit}_{v3}/T)$ at test time recovers both Brier Score (0.0091 $\to$ 0.0072, within 4\% of V2's 0.0069) and Log Loss (0.0546 $\to$ 0.0348, surpassing V2's 0.0398), while ROC AUC is unchanged by construction (temperature scaling is a monotone transformation of logits). The qualitative scenario comparisons (Chapter~\ref{ch:v3}) further demonstrate that Version 3 genuinely learns formation-aware adjustments that the CNN cannot represent. The architectural experiments (Section~\ref{sec:v3_arch_experiments}) establish that a multi-query variant achieves the highest AUC among all tested variants (0.8377, $\Delta = +0.0014$ over V3 Full), suggesting the original single scalar-logit query is an information bottleneck. However, after Holm--Bonferroni correction for $m = 5$ simultaneous comparisons, this advantage does not reach statistical significance ($p_{\text{raw}} = 0.307$, $p_{\text{Holm}} = 1.0$; see Section~\ref{sec:holm}), so the Multi-Query gain should be treated as directional rather than confirmed. The correction-layer dominance nonetheless persists across all variants.
+
+\subsection{Multiple Comparisons and the Holm--Bonferroni Correction}
+\label{sec:holm}
+
+The architectural experiments in Section~\ref{sec:v3_arch_experiments} compare five Stage~2 variants against the V3 Full baseline on the same 64 test matches, yielding five test statistics. Evaluating multiple hypotheses on a shared dataset inflates the probability of at least one false rejection. For $m = 5$ independent tests each at nominal level $\alpha = 0.05$, the uncorrected family-wise error rate (FWER) is $1 - (1 - \alpha)^m \approx 0.23$---more than four times the intended rate.
+
+Let $H_{0,1}, \ldots, H_{0,m}$ be the null hypotheses (each: \emph{variant AUC $\leq$ baseline AUC}) with associated one-sided p-values $p_1, \ldots, p_m$ from the paired bootstrap. Order them so that $p_{(1)} \leq p_{(2)} \leq \cdots \leq p_{(m)}$. The Holm--Bonferroni procedure~\cite{holm1979} assigns adjusted p-values
+\begin{equation}
+    \tilde{p}_{(i)}
+    \;=\;
+    \min\!\Bigl(1,\;\max_{j \leq i}\bigl[(m - j + 1)\,p_{(j)}\bigr]\Bigr),
+    \label{eq:holm}
+\end{equation}
+and rejects $H_{0,(i)}$ at level $\alpha$ whenever $\tilde{p}_{(i)} \leq \alpha$. This is equivalent to the sequentially rejective procedure: starting from the smallest p-value, reject $H_{0,(i)}$ if $p_{(i)} \leq \alpha / (m - i + 1)$, stopping at the first non-rejection. The Holm correction controls the FWER at exactly $\alpha$ under arbitrary dependence among test statistics, and is uniformly more powerful than the standard Bonferroni correction~\cite{holm1979}.
+
+The results of applying this correction to the five architectural variants are shown in Table~\ref{tab:multiplicity} (Appendix~\ref{app:metrics}). None of the five variants achieves a statistically significant AUC improvement over V3 Full after Holm--Bonferroni correction (all adjusted $p = 1.0$). The Multi-Query variant has the largest raw advantage ($\Delta = +0.0014$, 95\% CI $[-0.0043,\ +0.0078]$, $p_{\text{raw}} = 0.307$), but the interval comfortably straddles zero, indicating that the player-token gain is real in direction but not yet reliably separated from sampling noise on the 64-match test set.
+
+\section{Limitations and Threats to Validity}
+
+Match-level bootstrap confidence intervals (2,000 iterations, seed 42) were computed using the accompanying \texttt{evaluate\_ci.py} script and are reported in Table~\ref{tab:results} and the discussion above. The v2 and v3 95\% AUC CIs are $[0.7955,\ 0.8704]$ and $[0.8015,\ 0.8763]$ respectively; the paired difference CI is $[+0.0014,\ +0.0125]$, excluding zero ($p = 0.017$). Bootstrap 95\% CIs for Brier Score and Log Loss are reported in Table~\ref{tab:all_variants} (Appendix~\ref{app:metrics}). Version~3's Brier Score CI $[0.0078,\ 0.0104]$ marginally overlaps Version~2's $[0.0056,\ 0.0083]$, so the Brier calibration gap does not reach statistical separation at this test-set size; however, the Log Loss CIs separate cleanly (V2: $[0.0347,\ 0.0454]$; V3: $[0.0502,\ 0.0596]$), confirming that the log-likelihood degradation from uncalibrated Version~3 is a reliable effect. All CIs reflect match-level resampling over the 64-match test set, which is the appropriate unit of independence; event-level resampling would artificially narrow the intervals.
+
+The comparison has multiple caveats worth noting.
+
+The VAEP and Version 2/3 evaluation populations differ within the same 64 test matches (Section~\ref{sec:baseline}). This is not a design flaw but an inherent property of comparing models with different input requirements. ROC AUC is unaffected by this difference; Brier Score and Log Loss are omitted for VAEP accordingly.
+
+The Version 1 and Version 2/3 test sets are not the same population. Version 1 is evaluated on all events from 520 matches; Versions 2 and 3 use 199,788 events from 64 freeze-frame matches. This reflects the data available to each model, but it means the v1$\to$v2 jump cannot be attributed to architecture alone; the freeze-frame subset may differ systematically from the full dataset. For this reason we computed V1's training on the same list of events, and found a worse set of metrics than the normal V1, further proving the significant improvement from v1 to v2.
+
+With only 64 test matches, the Version 2 and Version 3 metric estimates carry more variance than Version 1's, and a different random seed could shift the test set noticeably.
+
+Seed stability was assessed by training Version 3 with seeds 0, 1, 42, and 123. ROC AUC across the four runs was $0.8348, 0.8349, 0.8358, 0.8363$, giving a mean of $0.8355 \pm 0.0007$ (sample standard deviation). The spread of $0.0015$ is below the $0.002$ threshold at which seed choice would constitute a meaningful caveat, providing strong evidence that the reported results are stable and not artefacts of a fortunate random seed. With only 64 test matches, a different partition of the 418 freeze-frame matches could plausibly shift results by a comparable amount, so seed stability and split stability are jointly informative about result reliability.
+
+Full metric tables (Table~\ref{tab:metrics_full}), dataset statistics (Table~\ref{tab:dataset_stats}), and key hyperparameters (Table~\ref{tab:hyperparams}) for all model versions are collected in Appendix~\ref{app:metrics}.

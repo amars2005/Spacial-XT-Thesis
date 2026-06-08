@@ -1,0 +1,49 @@
+\chapter{Evaluation Methodology}\label{ch:eval}
+
+\section{Evaluation Metrics}
+
+Four metrics are computed for every model version using a shared \texttt{evaluate.py} module. This ensures that any difference in the reported numbers is a genuine reflection of model performance rather than an artefact of inconsistent metric calculation.
+
+\subsection{ROC AUC}
+
+The Receiver Operating Characteristic (ROC) curve plots the true positive rate against the false positive rate as the classification threshold varies \cite{fawcett2006}. The Area Under this Curve (AUC) summarises the model's ability to rank positive examples above negative ones: an AUC of 0.5 indicates performance no better than random, whilst a value of 1.0 indicates perfect separation.
+
+For an xT model, ranking quality is the most important property: a carry into the penalty area should score higher than a pass in the defensive third, regardless of what specific probability values are assigned to them. ROC AUC captures this directly and is unaffected by the class imbalance of the dataset \cite{fawcett2006}. For Versions 2 and 3, labels are binarised before computing the metric: any event with a label of 1 (i.e.\ any event in a goal-scoring chain) is treated as positive. ROC AUC is both the primary evaluation metric and the training signal for Versions 2 and 3.
+
+The training signal is the quantity monitored on the validation set to determine when to reduce the learning rate and which model checkpoint to save. ROC AUC is evaluated via full-pass inference at the end of each epoch, where if it beats the best current ROC score the model is saved as a checkpoint. The \texttt{ReduceLROnPlateau} scheduler halves the learning rate whenever the validation ROC AUC fails to improve for a given number of epochs, and the best checkpoint corresponds to the epoch with the highest validation AUC.
+
+\subsection{Brier Score}
+
+The Brier Score is the mean squared error between the model's predicted probability $\hat{p}$ and the true binary label $y$ \cite{brier1950}:
+\[
+    \text{BS} = \frac{1}{N} \sum_{i=1}^{N} (\hat{p}_i - y_i)^2
+\]
+It ranges from 0 (perfect predictions) to 1 (worst possible). Unlike ROC AUC, which only cares about ranking, the Brier Score also penalises poor calibration: a model that assigns a probability of 0.9 to an event that does not lead to a goal is penalised more heavily than one that assigns 0.6 to the same event. It is therefore a useful complement to ROC AUC: a model can have a high AUC but a poor Brier Score if its predicted probabilities are systematically overconfident.
+
+\subsection{Binary Cross-Entropy Loss with Logits}\label{sec:meth_bce}
+
+We also trained using Binary Cross-Entropy (BCE) loss with logits~\cite{bishop2006}. The model outputs a raw real-valued score (logit) $z \in \mathbb{R}$, which is converted to a probability $\hat{p} = \sigma(z) = 1 / (1 + e^{-z})$ by the sigmoid function. The loss for a single example is:
+\[
+    \mathcal{L}(z, y) = -\left[y \log \sigma(z) + (1 - y) \log(1 - \sigma(z))\right]
+\]
+where $y \in \{0, 1\}$ is the binary goal-chain label. Computing the loss directly from the logit (rather than the sigmoid output) is numerically more stable, as the log-sigmoid computation can be simplified to avoid overflow.
+
+To address the severe class imbalance (approximately 1.74\% positive rate), a positive class weight $w_+$ is applied:
+\[
+    \mathcal{L}_\text{weighted}(z, y) = -\left[w_+ y \log \sigma(z) + (1 - y) \log(1 - \sigma(z))\right]
+\]
+This up-weights the gradient contribution from the rare goal-chain events relative to the abundant background events. The weight is capped at 10.0 to prevent over-amplification of goal-chain gradients, which would cause the model to assign unrealistically high probabilities to too many events.
+
+\section{Cross-Version Comparison Design}
+
+Three decisions keep the cross-version comparison honest.
+
+All three versions use the same 70/15/15 train/validation/test split, performed at the match level with a fixed random seed of 42. Splitting at the match level is important to prevent data leakage: if events from the same match appeared in both training and test sets, the model might memorise match-specific patterns rather than learning general football behaviour.
+
+Match-level bootstrap confidence intervals are computed by resampling the 64 test matches with replacement for 2,000 iterations and computing each metric on every resample; the 2.5th and 97.5th percentiles of the resulting distribution form the 95\% CI. Resampling at the match level respects the within-match dependence of events (events in the same match share teams, formations, and game context) and avoids the artificially narrow intervals that event-level resampling would produce. The one-sided $p$-value for a paired difference (e.g.\ V2 vs V3 AUC) is the fraction of bootstrap iterations in which the difference is $\leq 0$.
+
+For Versions 2 and 3, which both use the 360 freeze-frame dataset, we go one step further: Version 3 saves its exact test match IDs to a file at training time, and Version 2's evaluation script loads those same IDs to restrict its test set to the same 64 matches. Any difference in the Version 2 and Version 3 test metrics therefore reflects model quality alone, not a difference in which events were evaluated.
+
+Version 1 uses a different test set: events from 15\% of the full 3,464-match dataset. This is intentional: Version 1 predates the 360 data requirement, so it is evaluated on the broader event population it was built for. The step from Version 1 to Version 2 therefore combines both an architecture change and a data upgrade, whilst the step from Version 2 to Version 3 is a pure architecture comparison on identical data.
+
+Finally, all four metrics for all three versions are computed by the same shared \texttt{evaluate.py} module, eliminating any risk of inconsistency in metric calculation between versions.
